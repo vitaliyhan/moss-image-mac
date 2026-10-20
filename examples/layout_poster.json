@@ -1,0 +1,10 @@
+{
+  "summary": {"caption": "A minimalist summer music festival poster, warm orange gradient background, retro style"},
+  "items": [
+    {"label": "text", "caption": "Big bold title text 'SUNSET FEST'", "bbox": [-300, -320, -180, 320]},
+    {"label": "object", "caption": "a stylized setting sun with palm tree silhouettes", "bbox": [-140, -220, 180, 220]},
+    {"label": "text", "caption": "small text 'JULY 12 - 14 · SANTA MONICA'", "bbox": [230, -280, 290, 280]}
+  ],
+  "bbox_coord_space": "abs_centralized",
+  "bbox_format": "yxyx"
+}

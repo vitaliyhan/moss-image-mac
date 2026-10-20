@@ -1,0 +1,18 @@
+# Downloaded by setup.sh (multi-GB, not redistributed here)
+bin/
+models/
+.build/
+
+# Runtime
+.venv/
+outputs/
+logs/
+__pycache__/
+*.pyc
+*.part
+
+# Local-only notes
+research_notes/
+reports/
+
+.DS_Store

@@ -1,0 +1,4 @@
+mcp>=2.3,<3
+pillow>=10
+numpy>=1.26
+safetensors>=0.4
