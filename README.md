@@ -23,6 +23,7 @@ you can place elements with bounding boxes, edit images (inpainting / image-to-i
 - [Install](#install)
 - [Connect it to your app (MCP)](#connect-it-to-your-app-mcp)
 - [Tools](#tools)
+- [Scene composition with overlapping boxes](#scene-composition-with-overlapping-boxes)
 - [Quality modes and speed](#quality-modes-and-speed)
 - [Prompting tips](#prompting-tips)
 - [Command line and HTTP API](#command-line-and-http-api)
@@ -125,6 +126,25 @@ backend. See [docs/mcp-clients.md](docs/mcp-clients.md) for details.
 |---|---|---|
 | ![layout](docs/images/example_layout.jpg) | ![edit](docs/images/example_edit.jpg) | ![cutout](docs/images/example_cutout.png) |
 
+## Scene composition with overlapping boxes
+
+Layout boxes can **overlap and nest**, so you can compose a detailed scene in depth. In this example 11 boxes place a
+neon sign on a shop facade, lanterns across it, a chef behind a curtain, a cat on a bench, and a woman with an umbrella
+walking in front of a parked bicycle:
+
+![overlapping boxes](docs/images/overlap_boxes.jpg)
+
+| `standard` (4 steps, ~70 s) | `high` (50 steps, CFG 3, ~21 min) |
+|---|---|
+| ![standard](docs/images/overlap_standard.jpg) | ![high](docs/images/overlap_high.jpg) |
+
+```bash
+.venv/bin/python examples/overlapping_scene.py                   # or --quality high
+```
+
+The spec is [`examples/overlapping_scene.json`](examples/overlapping_scene.json); the same `caption` and `items` work
+in the `generate_layout_image` MCP tool. Tips are in [docs/layout-composition.md](docs/layout-composition.md).
+
 ## Quality modes and speed
 
 All three modes use the same model files and the same memory. Times are for a warm backend on a base M4 (10-core GPU):
@@ -133,7 +153,7 @@ All three modes use the same model files and the same memory. Times are for a wa
 |---|---|---|---|
 | `draft` | 3-step turbo LoRA | ~24-30 s | ~45 s |
 | `standard` (default; `best` is an alias) | 4-step turbo LoRA | **~30-35 s** | ~55-65 s |
-| `high` | Full model, official 50 steps, CFG 3 | ~10-11 min | ~20-30 min |
+| `high` | Full model, official 50 steps, CFG 3 | ~10-11 min | ~21 min |
 
 `size` presets per aspect ratio: `fast` ≈ 0.33 MP (e.g. 768×432), `balanced` ≈ 0.39 MP (832×464), `large` ≈ 0.59 MP (1024×576).
 Custom `width`/`height` are snapped to multiples of 16 and limited to 256-1536 px per side and ~1.1 MP.
@@ -151,6 +171,7 @@ Why not faster? On a base M4, four forward passes of a 5B model are already near
 
 - Put words that must appear in the image **in quotes**: `a neon sign that reads 'OPEN 24H'`. English and Chinese both work.
 - In layouts, keep `caption` about style and scene and put every visible word in an item. Words in the caption may be rendered as text.
+- Boxes can overlap: list background elements first, then the things on or in front of them, and say how they relate ("a cat asleep on the bench").
 - Long, specific prompts (subject, setting, light, lens or medium) beat short ones, especially at larger sizes.
 - For `edit_image`, the prompt describes the **whole** image you want, including what goes in the masked area.
 - Use the same `seed` to reproduce an image or to compare modes.
@@ -236,7 +257,7 @@ See [docs/troubleshooting.md](docs/troubleshooting.md). The common cases:
 ## Development
 
 ```bash
-PYTHONPATH=. .venv/bin/python -m unittest discover -s tests -t .   # 21 tests, no GPU needed (fake backend)
+PYTHONPATH=. .venv/bin/python -m unittest discover -s tests -t .   # 22 tests, no GPU needed (fake backend)
 ```
 
 Layout: `moss_mcp.py` (MCP tools), `moss_client.py` (HTTP client, prompts, cutout matting, CLI), `start_server.sh`,

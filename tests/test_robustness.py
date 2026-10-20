@@ -210,6 +210,22 @@ class ClientEdgeCases(unittest.TestCase):
             moss_client.layout_prompt("s", [{"caption": "t"}], 768, 432)
 
 
+class LayoutExamples(unittest.TestCase):
+    def test_overlapping_scene_example_is_valid(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        spec = json.load(open(os.path.join(root, "examples", "overlapping_scene.json")))
+        w, h = moss_client.validate_size(spec["width"], spec["height"])
+        layout = json.loads(moss_client.layout_prompt(spec["caption"], spec["items"], w, h))
+        self.assertEqual(len(layout["items"]), len(spec["items"]))
+        boxes = [it["box"] for it in spec["items"]]
+        overlaps = sum(1 for i, a in enumerate(boxes) for b in boxes[i + 1:]
+                       if a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3])
+        self.assertGreaterEqual(overlaps, 10)  # the point of the example: heavily overlapping boxes
+        for it in layout["items"]:  # centre-origin yxyx stays inside the canvas
+            y0, x0, y1, x1 = it["bbox"]
+            self.assertTrue(-h / 2 <= y0 < y1 <= h / 2 and -w / 2 <= x0 < x1 <= w / 2)
+
+
 class McpEdgeCases(unittest.TestCase):
     def setUp(self):
         import moss_mcp

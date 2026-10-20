@@ -1,0 +1,18 @@
+{
+  "width": 1024,
+  "height": 576,
+  "caption": "Cinematic night scene of a narrow rainy street in an old Japanese town, warm lantern light against cool blue shadows, light rain, rich detail, photorealistic, 35mm film look",
+  "items": [
+    {"label": "object", "caption": "a two-story old wooden ramen shop with dark timber walls and warm glowing paper windows", "box": [40, 40, 700, 520]},
+    {"label": "object", "caption": "a row of glowing red paper lanterns strung across the top of the shop front", "box": [20, 20, 1004, 110]},
+    {"label": "text", "caption": "a glowing vertical orange neon sign with the word 'RAMEN'", "box": [600, 70, 680, 380]},
+    {"label": "object", "caption": "an indigo noren curtain hanging over the shop doorway", "box": [220, 170, 470, 330]},
+    {"label": "object", "caption": "a ramen chef in a white uniform and headband behind a wooden counter, steam rising from bowls", "box": [260, 230, 440, 420]},
+    {"label": "object", "caption": "a long weathered wooden bench in front of the shop", "box": [80, 400, 520, 500]},
+    {"label": "object", "caption": "a fluffy orange cat curled up asleep on the bench", "box": [140, 360, 280, 450]},
+    {"label": "text", "caption": "a small chalkboard menu sign with the words 'TONKOTSU 980'", "box": [520, 360, 640, 520]},
+    {"label": "object", "caption": "a vintage blue bicycle leaning against the wall", "box": [640, 330, 900, 540]},
+    {"label": "object", "caption": "a woman holding a clear umbrella walking away along the wet street, seen from behind, in the foreground", "box": [760, 140, 980, 576]},
+    {"label": "object", "caption": "a rain-soaked cobblestone street reflecting neon and lantern light", "box": [0, 470, 1024, 576]}
+  ]
+}

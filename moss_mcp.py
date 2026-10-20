@@ -230,8 +230,8 @@ async def generate_image(prompt: str, aspect_ratio: Aspect = "16:9", size: Size 
     aspect_ratio + size pick a canvas (fast ~30-35 s, balanced ~35-45 s, large ~45-65 s on M4).
     width/height (multiples of 16, max ~1024) override the preset.
     quality: "standard" (default, 4-step turbo, ~30-60 s), "draft" (3-step, ~25% faster),
-    "high" (official 50 steps at CFG 3: finest detail/texture, ~10-15 min at fast sizes and
-    ~25-30 min at large sizes on a base M4; same memory). "best" = "standard".
+    "high" (official 50 steps at CFG 3: finest detail/texture, ~10-11 min at fast sizes and
+    ~21 min at large sizes on a base M4; same memory). "best" = "standard".
     seed -1 = random. upscale_2x does a quick Lanczos 2x resize.
     """
     w, h = _resolve_size(aspect_ratio, size, width, height)
@@ -255,6 +255,9 @@ async def generate_layout_image(caption: str, items: list[dict], aspect_ratio: A
            (for text put the exact words in quotes), "box": [x0, y0, x1, y1]} where the box is in
            pixels of the output canvas with (0,0) at the top-left. Use the same canvas you request;
            the result text reports the canvas size.
+    Boxes may overlap and nest to compose a scene in depth (a sign on a facade, a cat on a bench,
+    a person in front of a bicycle); 10+ items work. List large background elements first and
+    smaller foreground/detail elements after them; give each visible text its own box.
     quality: "standard" (default), "draft" or "high" (50-step reference, ~10-30 min).
     """
     w, h = _resolve_size(aspect_ratio, size, width, height)

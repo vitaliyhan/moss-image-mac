@@ -48,6 +48,7 @@ Bottom line: getting under ~10 s per image without losing quality isn't possible
 
 ## `high` mode
 
-`high` runs 50 steps with CFG 3, so two passes per step: ~12.3 s per step at 768×432, about **10.4 min per image**.
+`high` runs 50 steps with CFG 3, so two passes per step: ~12.3 s per step at 768×432 (about **10.4 min per
+image**) and ~25.6 s per step at 1024×576 (about **21.3 min**).
 It uses the same memory as `standard`. Its output was checked to be pixel-identical (mean absolute difference 0.0)
 to a reference `sd-cli` run with the same seed and settings.
