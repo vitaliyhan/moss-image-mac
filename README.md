@@ -16,8 +16,47 @@ you can place elements with bounding boxes, edit images (inpainting / image-to-i
 
 ---
 
+## Quick start: Web UI
+
+The easiest way to use the model is the built-in web interface — no MCP app or terminal skills needed:
+
+```bash
+./setup.sh          # one-time: downloads models (~9 GB) and creates the environment
+./start_ui.sh       # starts the UI and opens http://127.0.0.1:7877 in your browser
+```
+
+The UI starts the MOSS backend automatically on demand — the first render pays an extra
+~15 s while the models load, later renders reuse them.
+
+What's in the interface:
+
+- **Generate** — type a prompt (Cyrillic works, text inside images renders reliably), pick an
+  aspect ratio or custom size, quality (`draft` 3 steps ≈ 15 s, `standard` 4 steps ≈ 25 s,
+  `high` 50 steps ≈ 10 min), a seed (−1 = random), a batch of up to 4, and optional 2× upscale.
+  ⌘/Ctrl + Enter submits.
+- **Queue** — jobs render one at a time with live progress (sampler step, elapsed time).
+  ✕ cancels a running render or removes a queued one.
+- **Gallery** — everything in `outputs/`, with pagination (10 / 50 / 100 / all per page) and
+  sorting by date or size. Click an image to view it: `←` / `→` flip through, Esc closes,
+  and the panel offers Download, Upscale 2x and Delete.
+- **Stop backend / Quit** (top right) — unload the models to free ~8 GB of memory, or shut
+  the whole UI down. Relaunch anytime with `./start_ui.sh`.
+
+To browse images from other folders in the gallery too:
+
+```bash
+MOSS_EXTRA_GALLERY_DIRS="/path/to/folder:/another/folder" ./start_ui.sh
+```
+
+Tip: on macOS you can make a double-clickable launcher by wrapping `start_ui.sh` in an app
+bundle (Automator → "Application" that runs a shell script works fine) and dropping it on
+the Desktop.
+
+---
+
 ## Contents
 
+- [Quick start: Web UI](#quick-start-web-ui)
 - [What you get](#what-you-get)
 - [Requirements](#requirements)
 - [Install](#install)
@@ -77,15 +116,7 @@ Try it:
 ./generate.sh "a lovely cat holding a sign that says 'hello mac'"
 ```
 
-Or use the web UI — prompt, queue with live progress, gallery of everything in `outputs/`,
-and size / quality / seed / batch settings:
-
-```bash
-./start_ui.sh        # opens http://127.0.0.1:7877
-```
-
-The UI starts the MOSS backend on demand (the first render pays the ~15 s model load) and
-renders one job at a time through the same backend the CLI and MCP server use.
+or open the web UI (`./start_ui.sh`, see [Quick start: Web UI](#quick-start-web-ui) above).
 
 ## Connect it to your app (MCP)
 
