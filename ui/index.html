@@ -44,13 +44,13 @@ main { display: grid; grid-template-columns: 360px 1fr; min-height: calc(100vh -
 
 /* ---------- left column ---------- */
 #side { border-right: 1px solid var(--line); padding: 20px; display: flex; flex-direction: column; gap: 16px; }
-textarea#prompt {
+textarea#prompt, textarea#eprompt {
   width: 100%; min-height: 130px; resize: vertical;
   background: var(--panel2); color: var(--text);
   border: 1px solid var(--line); border-radius: 12px; padding: 12px;
   font: inherit; line-height: 1.45;
 }
-textarea#prompt:focus { outline: none; border-color: var(--accent); }
+textarea#prompt:focus, textarea#eprompt:focus { outline: none; border-color: var(--accent); }
 label { display: block; font-size: 12px; color: var(--dim); margin: 0 0 6px 2px; text-transform: uppercase; letter-spacing: .6px; }
 .row { display: flex; gap: 8px; flex-wrap: wrap; }
 .chip {
@@ -229,7 +229,7 @@ button.link { border: none; background: none; color: var(--accent); cursor: poin
       </div>
       <div>
         <label for="eprompt">Prompt — describe the <b>result</b>, not the change</label>
-        <textarea id="eprompt" style="min-height:90px"></textarea>
+        <textarea id="eprompt"></textarea>
       </div>
       <div class="grid2">
         <div><label for="estrength">Strength: <span id="estrengthval">0.75</span></label>
