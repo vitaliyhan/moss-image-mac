@@ -614,6 +614,9 @@ lcv.addEventListener("pointerdown", e => {
     const b = lay.boxes[hit];
     lay.drag = { kind: "move", dx: x - b.x0, dy: y - b.y0 };
   } else {
+    lay.sel = lay.boxes.length;
+    lay.boxes.push({ label: "object", caption: "", x0: x, y0: y, x1: x, y1: y });
+    lSelectFields();
     lay.drag = { kind: "new", x0: x, y0: y };
   }
   lcv.setPointerCapture(e.pointerId);
@@ -623,7 +626,6 @@ lcv.addEventListener("pointermove", e => {
   if (!lay.drag) return;
   const [x, y] = lCanvasPos(e);
   if (lay.drag.kind === "new") {
-    lay.boxes[lay.sel] = lay.boxes[lay.sel] || { label: "object", caption: "" };
     lay.boxes[lay.sel] = { ...lay.boxes[lay.sel], ...lClamp({ x0: lay.drag.x0, y0: lay.drag.y0, x1: x, y1: y }) };
   } else if (lay.drag.kind === "move") {
     const b = lay.boxes[lay.sel];
