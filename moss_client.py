@@ -91,8 +91,8 @@ def _request(path, body=None, timeout=30):
         raise BackendUnavailable(f"MOSS backend not reachable at {SERVER} ({e})") from None
 
 
-def _post(path, body):
-    return _request(path, body)
+def _post(path, body, timeout=30):
+    return _request(path, body, timeout=timeout)
 
 
 def _get(path):
@@ -185,7 +185,9 @@ def _run(body, out, timeout=600, on_progress=None, cancel_event=None, preview=Fa
         # Step-level progress needs cheap latent-projection previews (~1% overhead), so they are
         # only enabled for long full-model ("high") renders; turbo jobs report queue/run state.
         body = {**body, "preview": "proj", "preview_interval": 1}
-    job = _post("/sdcpp/v1/img_gen", body)
+    # The server answers /capabilities before its models finish loading, so the submit may
+    # wait on a busy sd-server: give it far more than the default 30 s.
+    job = _post("/sdcpp/v1/img_gen", body, timeout=600)
     job_id = job["id"]
     t0 = time.time()
     done = False

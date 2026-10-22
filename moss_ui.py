@@ -26,7 +26,12 @@ from moss_client import (MossError, QUALITY_STEPS, validate_size)
 
 UI_PORT = int(os.environ.get("MOSS_UI_PORT", "7877"))
 OUTPUTS = os.path.join(ROOT, "outputs")
+UPLOADS = os.path.join(OUTPUTS, ".uploads")  # uploaded init/mask images; hidden from the gallery
 BACKEND_START_TIMEOUT = 180  # seconds for the ~15 s model load on a cold start
+
+# Largest canvas we accept for an uploaded image (matches the model's limits: the turbo
+# LoRA is trained at <=1024^2 and bigger canvases exhaust GPU memory).
+MAX_UPLOAD_SIDE = 1024
 
 # Gallery shows outputs/ by default; list more folders in MOSS_EXTRA_GALLERY_DIRS
 # (colon-separated) to browse images from elsewhere. Only files under these roots can be
@@ -139,6 +144,42 @@ def _ensure_backend():
     return False
 
 
+# ------------------------------------------------------------------ uploads (edit tab)
+def _save_dataurl(dataurl):
+    """Decode a data:image/...;base64 URL, fit it to model limits, save under UPLOADS.
+
+    Returns (name, width, height). Raises ValueError on bad input.
+    """
+    import base64 as b64
+    import io
+    import re
+    import uuid
+
+    from PIL import Image
+
+    m = re.match(r"data:image/(png|jpeg|jpg|webp);base64,(.+)", dataurl or "", re.S)
+    if not m:
+        raise ValueError("expected a data:image/...;base64 URL")
+    img = Image.open(io.BytesIO(b64.b64decode(m.group(2))))
+    img.load()
+    if img.mode not in ("RGB", "RGBA", "L"):
+        img = img.convert("RGB")
+    w, h = img.size
+    scale = min(1.0, MAX_UPLOAD_SIDE / max(w, h), (1024 * 1024 + 64 * 1024) / (w * h))
+    if scale < 1.0:
+        img = img.resize((max(1, int(w * scale)), max(1, int(h * scale))), Image.LANCZOS)
+    os.makedirs(UPLOADS, exist_ok=True)
+    name = f"up_{int(time.time())}_{uuid.uuid4().hex[:8]}.png"
+    img.save(os.path.join(UPLOADS, name), format="PNG")
+    return name, img.width, img.height
+
+
+def _upload_path(name):
+    name = os.path.basename(str(name or ""))
+    p = os.path.join(UPLOADS, name)
+    return p if name.startswith("up_") and os.path.isfile(p) else None
+
+
 # ------------------------------------------------------------------ worker
 def _worker():
     while True:
@@ -175,11 +216,28 @@ def _run_job(job):
         with _lock:
             job.update(step=step, total=total, message=message)
 
-    try:
-        path, secs = moss_client.generate(
+    def run_generate():
+        init_path = _upload_path(p["init"]) if p.get("init") else None
+        mask_path = _upload_path(p["mask"]) if p.get("mask") else None
+        if p.get("init") and not init_path:
+            raise MossError("uploaded image is gone - pick the file again")
+        return moss_client.generate(
             p["prompt"], width=p["width"], height=p["height"], seed=p["seed"],
             out=out, steps=p["steps"], strength=p["strength"],
+            init_image=init_path, mask_image=mask_path,
             on_progress=on_progress, cancel_event=ev, preview=True)
+
+    try:
+        try:
+            path, secs = run_generate()
+        except moss_client.BackendUnavailable:
+            # The backend may still be binding its port when the first job lands; re-ensure once.
+            with _lock:
+                _backend.update(state="down", detail="")
+            time.sleep(2)
+            if not _ensure_backend():
+                raise
+            path, secs = run_generate()
         if p["upscale"]:
             with _lock:
                 job["message"] = "upscaling 2x"
@@ -218,13 +276,25 @@ def _enqueue(payload):
     if not 0.0 < strength <= 1.0:
         return None, "strength must be in (0, 1]"
     jobs = []
+    init_name = payload.get("init")
+    mask_name = payload.get("mask")
+    try:
+        if isinstance(mask_name, str) and mask_name.startswith("data:"):
+            mask_name, _, _ = _save_dataurl(mask_name)
+        if isinstance(init_name, str) and init_name.startswith("data:"):
+            init_name, _, _ = _save_dataurl(init_name)
+    except ValueError as e:
+        return None, f"bad mask/image: {e}"
+    mode = "inpaint" if (init_name and mask_name) else ("restyle" if init_name else "txt2img")
     with _lock:
         for _ in range(batch):
             job = {
                 "id": _next_id[0], "state": "queued", "prompt": prompt[:200],
+                "mode": mode,
                 "params": {"prompt": prompt, "width": width, "height": height,
                            "seed": seed, "steps": QUALITY_STEPS[quality], "strength": strength,
-                           "upscale": bool(payload.get("upscale"))},
+                           "upscale": bool(payload.get("upscale")),
+                           "init": init_name, "mask": mask_name},
                 "step": 0, "total": None, "message": "queued",
                 "enqueued": time.time(), "started": None, "finished": None,
             }
@@ -300,7 +370,13 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, json.JSONDecodeError):
             self._json({"error": "invalid JSON body"}, 400)
             return
-        if path == "/api/generate":
+        if path == "/api/upload":
+            try:
+                name, w, h = _save_dataurl(payload.get("data"))
+                self._json({"ok": True, "name": name, "width": w, "height": h})
+            except Exception as e:
+                self._json({"error": f"bad image: {e}"}, 400)
+        elif path == "/api/generate":
             job, err = _enqueue(payload)
             self._json({"error": err} if err else {"ok": True, "job": job})
         elif path == "/api/cancel":

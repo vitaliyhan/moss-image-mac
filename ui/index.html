@@ -66,12 +66,30 @@ input[type=number], select {
   border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; font: inherit;
 }
 input[type=number]:focus, select:focus { outline: none; border-color: var(--accent); }
-#go {
+#go, #ego {
   width: 100%; padding: 13px; border: none; border-radius: 12px; cursor: pointer;
   font: inherit; font-weight: 650; font-size: 15px; color: #fff;
   background: linear-gradient(135deg, var(--accent), var(--accent2));
 }
-#go:disabled { opacity: .45; cursor: default; }
+#go:disabled, #ego:disabled { opacity: .45; cursor: default; }
+
+.tabs { display: flex; gap: 8px; }
+button.tab {
+  flex: 1; padding: 9px 0; font: inherit; font-size: 13.5px; cursor: pointer;
+  background: var(--panel2); color: var(--dim); border: 1px solid var(--line); border-radius: 10px;
+}
+button.tab.on { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--panel2)); }
+#panel-gen, #panel-edit { display: flex; flex-direction: column; gap: 14px; }
+
+#ecanvas-wrap { position: relative; display: none; border-radius: 12px; overflow: hidden; border: 1px solid var(--line); }
+#ecanvas-wrap canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
+#eimg { display: block; width: 100%; }
+#eempty { color: var(--dim); font-size: 13px; text-align: center; padding: 18px 0; border: 1px dashed var(--line); border-radius: 12px; }
+#brushrow { display: none; align-items: center; gap: 8px; }
+#brushrow.show { display: flex; }
+#brushrow input[type=range] { flex: 1; }
+label.inline { display: inline; margin: 0; text-transform: none; letter-spacing: 0; font-size: 12.5px; color: var(--dim); }
+input[type=range] { accent-color: var(--accent); }
 
 /* ---------- queue ---------- */
 #queue { display: flex; flex-direction: column; gap: 8px; }
@@ -147,37 +165,93 @@ button.link { border: none; background: none; color: var(--accent); cursor: poin
 </header>
 <main>
   <div id="side">
-    <div>
-      <label for="prompt">Prompt</label>
-      <textarea id="prompt" placeholder="Опишите изображение… например: уютная московская улица на закате, вывеска «МОСКВА»"></textarea>
+    <div class="tabs">
+      <button id="tab-gen" class="tab on">✨ Generate</button>
+      <button id="tab-edit" class="tab">🖌 Edit image</button>
     </div>
-    <div>
-      <label>Aspect ratio</label>
-      <div class="row" id="ratios"></div>
-    </div>
-    <div class="grid2">
-      <div><label for="w">Width</label><input id="w" type="number" value="1024" step="16" min="256" max="1536"></div>
-      <div><label for="h">Height</label><input id="h" type="number" value="1024" step="16" min="256" max="1536"></div>
-    </div>
-    <div class="grid2">
-      <div><label for="q">Quality</label>
-        <select id="q">
-          <option value="draft">Draft — 3 steps (~15 s)</option>
-          <option value="standard" selected>Standard — 4 steps (~25 s)</option>
-          <option value="high">High — 50 steps (~10 min)</option>
-        </select>
+
+    <div id="panel-gen">
+      <div>
+        <label for="prompt">Prompt</label>
+        <textarea id="prompt" placeholder="Опишите изображение… например: уютная московская улица на закате, вывеска «МОСКВА»"></textarea>
       </div>
-      <div><label for="seed">Seed (-1 random)</label><input id="seed" type="number" value="-1"></div>
-    </div>
-    <div class="grid2">
-      <div><label for="batch">Batch</label>
-        <select id="batch"><option>1</option><option>2</option><option>3</option><option>4</option></select>
+      <div>
+        <label>Aspect ratio</label>
+        <div class="row" id="ratios"></div>
       </div>
-      <div><label for="ups">Post</label>
-        <select id="ups"><option value="">none</option><option value="1">upscale 2x</option></select>
+      <div class="grid2">
+        <div><label for="w">Width</label><input id="w" type="number" value="1024" step="16" min="256" max="1536"></div>
+        <div><label for="h">Height</label><input id="h" type="number" value="1024" step="16" min="256" max="1536"></div>
       </div>
+      <div class="grid2">
+        <div><label for="q">Quality</label>
+          <select id="q">
+            <option value="draft">Draft — 3 steps (~15 s)</option>
+            <option value="standard" selected>Standard — 4 steps (~25 s)</option>
+            <option value="high">High — 50 steps (~10 min)</option>
+          </select>
+        </div>
+        <div><label for="seed">Seed (-1 random)</label><input id="seed" type="number" value="-1"></div>
+      </div>
+      <div class="grid2">
+        <div><label for="batch">Batch</label>
+          <select id="batch"><option>1</option><option>2</option><option>3</option><option>4</option></select>
+        </div>
+        <div><label for="ups">Post</label>
+          <select id="ups"><option value="">none</option><option value="1">upscale 2x</option></select>
+        </div>
+      </div>
+      <button id="go">Generate</button>
     </div>
-    <button id="go">Generate</button>
+
+    <div id="panel-edit" style="display:none">
+      <input type="file" id="efile" accept="image/png,image/jpeg,image/webp" hidden>
+      <div class="grid2">
+        <button id="epick" class="chip">📷 Choose image…</button>
+        <button id="eclear" class="chip">✕ Clear</button>
+      </div>
+      <div id="ewrap">
+        <div id="ecanvas-wrap">
+          <img id="eimg" alt="uploaded image">
+          <canvas id="emask"></canvas>
+        </div>
+        <div id="eempty">No image loaded — choose one to edit.</div>
+      </div>
+      <div class="row" id="emodes">
+        <button class="chip on" data-mode="restyle">Restyle — whole image</button>
+        <button class="chip" data-mode="inpaint">Repaint — brush mask</button>
+      </div>
+      <div id="brushrow">
+        <label class="inline" for="ebrush">Brush <span id="ebrushval">30</span>px</label>
+        <input type="range" id="ebrush" min="5" max="100" value="30">
+        <button class="chip" id="eerase">Erase</button>
+        <button class="chip" id="emaskclear">Clear mask</button>
+      </div>
+      <div>
+        <label for="eprompt">Prompt — describe the <b>result</b>, not the change</label>
+        <textarea id="eprompt" style="min-height:90px"></textarea>
+      </div>
+      <div class="grid2">
+        <div><label for="estrength">Strength: <span id="estrengthval">0.75</span></label>
+          <input type="range" id="estrength" min="0.15" max="1" step="0.05" value="0.75">
+        </div>
+        <div><label for="eseed">Seed (-1 random)</label><input id="eseed" type="number" value="-1"></div>
+      </div>
+      <div class="grid2">
+        <div><label for="eq">Quality</label>
+          <select id="eq">
+            <option value="draft">Draft — 3 steps</option>
+            <option value="standard" selected>Standard — 4 steps</option>
+            <option value="high">High — 50 steps</option>
+          </select>
+        </div>
+        <div><label for="eups">Post</label>
+          <select id="eups"><option value="">none</option><option value="1">upscale 2x</option></select>
+        </div>
+      </div>
+      <button id="ego">Transform</button>
+    </div>
+
     <div>
       <label>Queue</label>
       <div id="queue"><div id="empty">Queue is empty.</div></div>
@@ -266,6 +340,111 @@ $("#go").onclick = async () => {
 };
 $("#prompt").addEventListener("keydown", e => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") $("#go").click(); });
 
+// ------------------------------------------------------------------ edit tab
+const edit = { name: null, w: 0, h: 0, mode: "restyle", erase: false, painting: false, last: null };
+const maskCv = $("#emask"), maskCtx = maskCv.getContext("2d");
+
+$("#tab-gen").onclick = () => setTab("gen");
+$("#tab-edit").onclick = () => setTab("edit");
+function setTab(which) {
+  $("#tab-gen").classList.toggle("on", which === "gen");
+  $("#tab-edit").classList.toggle("on", which === "edit");
+  $("#panel-gen").style.display = which === "gen" ? "flex" : "none";
+  $("#panel-edit").style.display = which === "edit" ? "flex" : "none";
+}
+
+$("#epick").onclick = () => $("#efile").click();
+$("#efile").onchange = () => { if ($("#efile").files[0]) loadEditFile($("#efile").files[0]); $("#efile").value = ""; };
+$("#ewrap").addEventListener("dragover", e => { e.preventDefault(); });
+$("#ewrap").addEventListener("drop", e => {
+  e.preventDefault();
+  if (e.dataTransfer.files[0]) loadEditFile(e.dataTransfer.files[0]);
+});
+async function loadEditFile(file) {
+  const data = await new Promise(res => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(file); });
+  const r = await fetch("/api/upload", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({data})});
+  const j = await r.json();
+  if (j.error) { alert(j.error); return; }
+  edit.name = j.name; edit.w = j.width; edit.h = j.height;
+  $("#eimg").src = data;
+  maskCv.width = edit.w; maskCv.height = edit.h;
+  maskCtx.fillStyle = "#000"; maskCtx.fillRect(0, 0, edit.w, edit.h);
+  $("#ecanvas-wrap").style.display = "block";
+  $("#eempty").style.display = "none";
+}
+$("#eclear").onclick = () => {
+  edit.name = null;
+  $("#ecanvas-wrap").style.display = "none";
+  $("#eempty").style.display = "";
+};
+$("#emodes").onclick = e => {
+  const b = e.target.closest("button[data-mode]");
+  if (!b) return;
+  for (const x of $("#emodes").children) x.classList.toggle("on", x === b);
+  edit.mode = b.dataset.mode;
+  $("#brushrow").classList.toggle("show", edit.mode === "inpaint");
+  $("#estrength").value = edit.mode === "inpaint" ? 1 : 0.75;
+  $("#estrengthval").textContent = $("#estrength").value;
+};
+$("#ebrush").oninput = () => $("#ebrushval").textContent = $("#ebrush").value;
+$("#eerase").onclick = () => {
+  edit.erase = !edit.erase;
+  $("#eerase").classList.toggle("on", edit.erase);
+  maskCv.style.cursor = edit.erase ? "cell" : "crosshair";
+};
+$("#emaskclear").onclick = () => { maskCtx.fillStyle = "#000"; maskCtx.fillRect(0, 0, edit.w, edit.h); };
+
+function maskPos(e) {
+  const r = maskCv.getBoundingClientRect();
+  return [Math.round((e.clientX - r.left) * maskCv.width / r.width),
+          Math.round((e.clientY - r.top) * maskCv.height / r.height)];
+}
+function maskStroke(from, to) {
+  maskCtx.strokeStyle = edit.erase ? "#000" : "#fff";
+  maskCtx.lineWidth = +$("#ebrush").value * maskCv.width / maskCv.getBoundingClientRect().width;
+  maskCtx.lineCap = maskCtx.lineJoin = "round";
+  maskCtx.beginPath();
+  maskCtx.moveTo(...from);
+  maskCtx.lineTo(...to);
+  maskCtx.stroke();
+}
+maskCv.addEventListener("pointerdown", e => {
+  if (edit.mode !== "inpaint" || !edit.name) return;
+  edit.painting = true; edit.last = maskPos(e);
+  maskStroke(edit.last, [edit.last[0] + 0.01, edit.last[1]]);
+  maskCv.setPointerCapture(e.pointerId);
+});
+maskCv.addEventListener("pointermove", e => {
+  if (!edit.painting) return;
+  const p = maskPos(e);
+  maskStroke(edit.last, p);
+  edit.last = p;
+});
+["pointerup", "pointercancel"].forEach(ev => maskCv.addEventListener(ev, () => edit.painting = false));
+
+$("#estrength").oninput = () => $("#estrengthval").textContent = $("#estrength").value;
+$("#ego").onclick = async () => {
+  if (!edit.name) { alert("Choose an image first."); return; }
+  const body = {
+    prompt: $("#eprompt").value, width: edit.w, height: edit.h,
+    quality: $("#eq").value, seed: +$("#eseed").value,
+    batch: 1, upscale: $("#eups").value === "1",
+    strength: +$("#estrength").value, init: edit.name,
+  };
+  if (edit.mode === "inpaint") {
+    if (typeof maskCv.toBlob !== "function") return;
+    const maskData = await new Promise(res => maskCv.toBlob(b => {
+      const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(b);
+    }, "image/png"));
+    body.mask = maskData;
+  }
+  const r = await fetch("/api/generate", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  const j = await r.json();
+  if (j.error) alert(j.error);
+  refresh();
+};
+$("#eprompt").addEventListener("keydown", e => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") $("#ego").click(); });
+
 const ST_LABEL = {queued: "queued", running: "rendering", done: "done", failed: "failed", cancelled: "cancelled"};
 function renderQueue(jobs) {
   queueEl.replaceChildren();
@@ -274,7 +453,8 @@ function renderQueue(jobs) {
     const d = document.createElement("div"); d.className = "job";
     const top = document.createElement("div"); top.className = "top";
     const pt = document.createElement("div"); pt.className = "prompt-text"; pt.textContent = j.prompt; pt.title = j.prompt;
-    const st = document.createElement("span"); st.className = "st " + j.state; st.textContent = ST_LABEL[j.state] || j.state;
+    const st = document.createElement("span"); st.className = "st " + j.state;
+    st.textContent = (ST_LABEL[j.state] || j.state) + (j.mode && j.mode !== "txt2img" ? " · " + j.mode : "");
     top.append(pt, st); d.append(top);
     if (j.state === "running" || j.state === "queued") {
       const bar = document.createElement("div"); bar.className = "bar";
