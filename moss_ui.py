@@ -323,7 +323,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _file(self, path, ctype):
+    def _file(self, path, ctype, cache=None):
         try:
             with open(path, "rb") as f:
                 body = f.read()
@@ -333,7 +333,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "max-age=3600")
+        # Images are immutable content and cache well; the UI page itself must always be
+        # re-fetched, or an updated interface looks like "the shortcut opens something old".
+        self.send_header("Cache-Control", cache or "no-cache")
         self.end_headers()
         self.wfile.write(body)
 
@@ -352,11 +354,11 @@ class Handler(BaseHTTPRequestHandler):
                 return
             ext = os.path.splitext(fp)[1].lower()
             ctype = "image/png" if ext == ".png" else "image/jpeg"
-            self._file(fp, ctype)
+            self._file(fp, ctype, cache="max-age=3600")
         elif path.startswith("/outputs/"):
             name = os.path.basename(path[len("/outputs/"):])
             ctype = "image/png" if name.endswith(".png") else "image/jpeg"
-            self._file(os.path.join(OUTPUTS, name), ctype)
+            self._file(os.path.join(OUTPUTS, name), ctype, cache="max-age=3600")
         elif path == "/api/gallery-zip":
             self._json({"error": "not implemented"}, 404)
         else:
