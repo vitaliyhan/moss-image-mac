@@ -385,8 +385,17 @@ for (const [label, w, h] of RATIOS) {
   };
   ratioBox.append(b);
 }
-const save = () => { for (const [k, id] of [["prompt","prompt"],["w","w"],["h","h"],["q","q"],["seed","seed"],["batch","batch"],["ups","ups"]]) localStorage.setItem("moss_" + k, $("#" + id).value); };
-for (const id of ["prompt","w","h","q","seed","batch","ups"]) $("#" + id).addEventListener("change", save);
+const save = () => { for (const [k, id] of [["prompt","prompt"],["w","w"],["h","h"],["q","q"],["seed","seed"],["batch","batch"],["ups","ups"],["eprompt","eprompt"],["estrength","estrength"],["eseed","eseed"],["eq","eq"],["eups","eups"],["lscene","lscene"],["lw","lw"],["lh","lh"],["lq","lq"],["lseed","lseed"],["lups","lups"]]) localStorage.setItem("moss_" + k, $("#" + id).value); };
+for (const id of ["prompt","w","h","q","seed","batch","ups","eprompt","estrength","eseed","eq","eups","lscene","lw","lh","lq","lseed","lups"]) {
+  $("#" + id).addEventListener("input", save);
+  $("#" + id).addEventListener("change", save);
+}
+// restore edit/layout values and refresh dependent labels
+["eprompt","estrength","eseed","eq","eups","lscene","lw","lh","lq","lseed","lups"].forEach(id => {
+  const v = localStorage.getItem("moss_" + id);
+  if (v !== null) $("#" + id).value = v;
+});
+$("#estrengthval").textContent = $("#estrength").value;
 
 $("#go").onclick = async () => {
   const body = {
@@ -682,6 +691,7 @@ lay.boxes = [
   { label: "object", caption: "A flat blue mountain illustration in the lower center.",
     x0: 320, y0: 480, x1: 704, y1: 896 },
 ];
+lay.w = Math.max(256, +$("#lw").value || 1024); lay.h = Math.max(256, +$("#lh").value || 1024);
 lResizeCanvas();
 
 const ST_LABEL = {queued: "queued", running: "rendering", done: "done", failed: "failed", cancelled: "cancelled"};

@@ -99,10 +99,16 @@ def _public_state():
 
 # ------------------------------------------------------------------ backend management
 def _try_capabilities():
-    """True if a MOSS backend is up. Updates _backend on failure."""
+    """True if a MOSS backend is up. Updates _backend on a foreign/port-conflict error.
+
+    A refused connection (backend not bound yet, models still loading) is NOT an error:
+    the caller keeps polling until the start timeout.
+    """
     try:
         moss_client.server_identity()
         return True
+    except moss_client.BackendUnavailable:
+        return False
     except MossError as e:
         with _lock:
             _backend.update(state="error", detail=str(e))
@@ -123,11 +129,13 @@ def _ensure_backend():
         _backend_proc = subprocess.Popen(
             [os.path.join(ROOT, "start_server.sh")], cwd=ROOT,
             stdout=log, stderr=subprocess.STDOUT)
+        _dbg("spawned start_server.sh")
     deadline = time.time() + BACKEND_START_TIMEOUT
     while time.time() < deadline:
         if _try_capabilities():
             with _lock:
                 _backend.update(state="up", detail="")
+            _dbg("capabilities ok -> backend up")
             return True
         if _backend["state"] == "error":
             return False
@@ -181,6 +189,10 @@ def _upload_path(name):
 
 
 # ------------------------------------------------------------------ worker
+def _dbg(msg):
+    print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+
+
 def _worker():
     while True:
         with _lock:
@@ -229,14 +241,17 @@ def _run_job(job):
 
     try:
         try:
+            _dbg("generate attempt 1")
             path, secs = run_generate()
-        except moss_client.BackendUnavailable:
+        except moss_client.BackendUnavailable as e:
             # The backend may still be binding its port when the first job lands; re-ensure once.
+            _dbg(f"attempt 1 unavailable: {e}")
             with _lock:
                 _backend.update(state="down", detail="")
             time.sleep(2)
             if not _ensure_backend():
                 raise
+            _dbg("generate attempt 2")
             path, secs = run_generate()
         if p["upscale"]:
             with _lock:
