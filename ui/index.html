@@ -79,7 +79,19 @@ button.tab {
   background: var(--panel2); color: var(--dim); border: 1px solid var(--line); border-radius: 10px;
 }
 button.tab.on { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--panel2)); }
-#panel-gen, #panel-edit { display: flex; flex-direction: column; gap: 14px; }
+#panel-gen, #panel-edit, #panel-layout { display: flex; flex-direction: column; gap: 14px; }
+#lcanvas-wrap { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background:
+  repeating-conic-gradient(#1a212c 0% 25%, #151b25 0% 50%) 50% / 24px 24px; }
+#lcanvas { display: block; width: 100%; touch-action: none; cursor: crosshair; }
+#panel-layout input[type=text], #panel-layout input:not([type]), #panel-layout textarea {
+  width: 100%; background: var(--panel2); color: var(--text);
+  border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; font: inherit;
+}
+#panel-layout input:focus, #panel-layout textarea:focus { outline: none; border-color: var(--accent); }
+#panel-layout textarea { resize: vertical; }
+#lgo { width: 100%; padding: 13px; border: none; border-radius: 12px; cursor: pointer;
+  font: inherit; font-weight: 650; font-size: 15px; color: #fff;
+  background: linear-gradient(135deg, var(--accent), var(--accent2)); }
 
 #ecanvas-wrap { position: relative; display: none; border-radius: 12px; overflow: hidden; border: 1px solid var(--line); }
 #ecanvas-wrap canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
@@ -168,6 +180,7 @@ button.link { border: none; background: none; color: var(--accent); cursor: poin
     <div class="tabs">
       <button id="tab-gen" class="tab on">✨ Generate</button>
       <button id="tab-edit" class="tab">🖌 Edit image</button>
+      <button id="tab-layout" class="tab">📐 Layout</button>
     </div>
 
     <div id="panel-gen">
@@ -250,6 +263,54 @@ button.link { border: none; background: none; color: var(--accent); cursor: poin
         </div>
       </div>
       <button id="ego">Transform</button>
+    </div>
+
+    <div id="panel-layout" style="display:none">
+      <div>
+        <label>Canvas — draw boxes by dragging; drag inside to move, corner to resize</label>
+        <div id="lcanvas-wrap">
+          <canvas id="lcanvas"></canvas>
+        </div>
+        <div class="meta" id="lcoord" style="margin-top:6px">No box selected.</div>
+      </div>
+      <div class="grid2">
+        <div><label for="lw">Width</label><input id="lw" type="number" value="1024" step="16" min="256" max="1536"></div>
+        <div><label for="lh">Height</label><input id="lh" type="number" value="1024" step="16" min="256" max="1536"></div>
+      </div>
+      <div class="grid2">
+        <div><label for="llabel">Selected box — type</label>
+          <select id="llabel"><option value="object">object</option><option value="text">text</option></select>
+        </div>
+        <div><label for="ltext">Text (for text boxes)</label><input id="ltext" placeholder="EXPLORE" disabled></div>
+      </div>
+      <div>
+        <label for="lcaption">Selected box — description</label>
+        <input id="lcaption" placeholder="A flat blue mountain illustration in the lower center.">
+      </div>
+      <button class="chip" id="ldelete" style="width:100%">🗑 Delete selected box</button>
+      <div>
+        <label for="lscene">Scene caption — overall style and content</label>
+        <textarea id="lscene" style="min-height:80px">A minimalist travel poster with a cream background.</textarea>
+      </div>
+      <div class="grid2">
+        <div><label for="lq">Quality</label>
+          <select id="lq">
+            <option value="draft">Draft — 3 steps</option>
+            <option value="standard" selected>Standard — 4 steps</option>
+            <option value="high">High — 50 steps</option>
+          </select>
+        </div>
+        <div><label for="lseed">Seed (-1 random)</label><input id="lseed" type="number" value="-1"></div>
+      </div>
+      <div><label for="lups">Post</label>
+        <select id="lups"><option value="">none</option><option value="1">upscale 2x</option></select>
+      </div>
+      <details style="font-size:12.5px">
+        <summary style="cursor:pointer;color:var(--dim)">Structured prompt (JSON)</summary>
+        <pre id="ljson" style="white-space:pre-wrap;color:var(--dim);font-size:11px;max-height:200px;overflow:auto"></pre>
+        <button class="chip" id="lcopy">Copy JSON</button>
+      </details>
+      <button id="lgo">Generate layout</button>
     </div>
 
     <div>
@@ -346,11 +407,14 @@ const maskCv = $("#emask"), maskCtx = maskCv.getContext("2d");
 
 $("#tab-gen").onclick = () => setTab("gen");
 $("#tab-edit").onclick = () => setTab("edit");
+$("#tab-layout").onclick = () => setTab("layout");
 function setTab(which) {
   $("#tab-gen").classList.toggle("on", which === "gen");
   $("#tab-edit").classList.toggle("on", which === "edit");
+  $("#tab-layout").classList.toggle("on", which === "layout");
   $("#panel-gen").style.display = which === "gen" ? "flex" : "none";
   $("#panel-edit").style.display = which === "edit" ? "flex" : "none";
+  $("#panel-layout").style.display = which === "layout" ? "flex" : "none";
 }
 
 $("#epick").onclick = () => $("#efile").click();
@@ -444,6 +508,181 @@ $("#ego").onclick = async () => {
   refresh();
 };
 $("#eprompt").addEventListener("keydown", e => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") $("#ego").click(); });
+
+// ------------------------------------------------------------------ layout tab
+const lay = { w: 1024, h: 1024, caption: "", boxes: [], sel: -1, drag: null };
+const lcv = $("#lcanvas"), lctx = lcv.getContext("2d");
+
+function lNorm(b) { return { x0: Math.min(b.x0, b.x1), y0: Math.min(b.y0, b.y1), x1: Math.max(b.x0, b.x1), y1: Math.max(b.y0, b.y1) }; }
+function lClamp(b) {
+  b = lNorm(b);
+  b.x0 = Math.max(0, Math.min(lay.w, b.x0)); b.x1 = Math.max(0, Math.min(lay.w, b.x1));
+  b.y0 = Math.max(0, Math.min(lay.h, b.y0)); b.y1 = Math.max(0, Math.min(lay.h, b.y1));
+  return b;
+}
+function lColor(label) { return label === "text" ? "#5b9dff" : "#4cc38a"; }
+
+function lResizeCanvas() {
+  lcv.width = lay.w; lcv.height = lay.h;
+  lDraw();
+}
+function lDraw() {
+  lctx.clearRect(0, 0, lay.w, lay.h);
+  const s = lcv.width / lcv.getBoundingClientRect().width; // device scale for crisp lines
+  lay.boxes.forEach((b, i) => {
+    const col = lColor(b.label);
+    lctx.fillStyle = col + "1f";
+    lctx.strokeStyle = i === lay.sel ? "#ffffff" : col;
+    lctx.lineWidth = (i === lay.sel ? 3.5 : 2.5) * s;
+    lctx.fillRect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0);
+    lctx.strokeRect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0);
+    // index badge + label
+    lctx.fillStyle = col;
+    lctx.fillRect(b.x0, b.y0, 34 * s, 24 * s);
+    lctx.fillStyle = "#0e1116";
+    lctx.font = `bold ${15 * s}px -apple-system`;
+    lctx.fillText(String(i + 1), b.x0 + 10 * s, b.y0 + 18 * s);
+    lctx.fillStyle = col;
+    lctx.font = `${13 * s}px -apple-system`;
+    lctx.fillText((b.label || "") + (b.label === "text" && b.text ? `: “${b.text}”` : ""), b.x0 + 40 * s, b.y0 + 18 * s);
+    if (i === lay.sel) { // corner resize handles
+      lctx.fillStyle = "#ffffff";
+      for (const [hx, hy] of [[b.x0, b.y0], [b.x1, b.y0], [b.x0, b.y1], [b.x1, b.y1]])
+        lctx.fillRect(hx - 7 * s, hy - 7 * s, 14 * s, 14 * s);
+    }
+  });
+  $("#lcoord").textContent = lay.sel >= 0 && lay.boxes[lay.sel]
+    ? `Box ${lay.sel + 1}: bbox [y_min, x_min, y_max, x_max] from center = [${lBbox(lay.boxes[lay.sel]).join(", ")}]`
+    : "No box selected. Drag on the canvas to add one.";
+  $("#ljson").textContent = lJson();
+}
+function lBbox(b) { // native abs_centralized yxyx
+  const cx = lay.w / 2, cy = lay.h / 2;
+  return [Math.round(b.y0 - cy), Math.round(b.x0 - cx), Math.round(b.y1 - cy), Math.round(b.x1 - cx)];
+}
+function lJson() {
+  const items = lay.boxes.map(b => {
+    const it = { label: b.label, caption: b.caption };
+    if (b.label === "text" && b.text) it.text = b.text;
+    it.bbox = lBbox(b);
+    return it;
+  });
+  return JSON.stringify({
+    summary: { caption: $("#lscene").value },
+    items,
+    bbox_coord_space: "abs_centralized", bbox_format: "yxyx",
+  }, null, 2);
+}
+
+function lCanvasPos(e) {
+  const r = lcv.getBoundingClientRect();
+  return [Math.round((e.clientX - r.left) * lcv.width / r.width),
+          Math.round((e.clientY - r.top) * lcv.height / r.height)];
+}
+function lHit(x, y) { // topmost box containing the point
+  for (let i = lay.boxes.length - 1; i >= 0; i--) {
+    const b = lay.boxes[i];
+    if (x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1) return i;
+  }
+  return -1;
+}
+function lNearCorner(x, y, b) {
+  const th = 16 * lcv.width / lcv.getBoundingClientRect().width;
+  const corners = [[b.x0, b.y0, "x0", "y0"], [b.x1, b.y0, "x1", "y0"], [b.x0, b.y1, "x0", "y1"], [b.x1, b.y1, "x1", "y1"]];
+  for (const [cx, cy, kx, ky] of corners)
+    if (Math.abs(x - cx) <= th && Math.abs(y - cy) <= th) return { kx, ky };
+  return null;
+}
+lcv.addEventListener("pointerdown", e => {
+  const [x, y] = lCanvasPos(e);
+  if (lay.sel >= 0 && lay.boxes[lay.sel]) {
+    const c = lNearCorner(x, y, lay.boxes[lay.sel]);
+    if (c) { lay.drag = { kind: "resize", ...c }; lcv.setPointerCapture(e.pointerId); return; }
+  }
+  const hit = lHit(x, y);
+  if (hit >= 0) {
+    lay.sel = hit; lSelectFields();
+    const b = lay.boxes[hit];
+    lay.drag = { kind: "move", dx: x - b.x0, dy: y - b.y0 };
+  } else {
+    lay.drag = { kind: "new", x0: x, y0: y };
+  }
+  lcv.setPointerCapture(e.pointerId);
+  lDraw();
+});
+lcv.addEventListener("pointermove", e => {
+  if (!lay.drag) return;
+  const [x, y] = lCanvasPos(e);
+  if (lay.drag.kind === "new") {
+    lay.boxes[lay.sel] = lay.boxes[lay.sel] || { label: "object", caption: "" };
+    lay.boxes[lay.sel] = { ...lay.boxes[lay.sel], ...lClamp({ x0: lay.drag.x0, y0: lay.drag.y0, x1: x, y1: y }) };
+  } else if (lay.drag.kind === "move") {
+    const b = lay.boxes[lay.sel];
+    const w = b.x1 - b.x0, h = b.y1 - b.y0;
+    Object.assign(b, lClamp({ x0: x - lay.drag.dx, y0: y - lay.drag.dy, x1: x - lay.drag.dx + w, y1: y - lay.drag.dy + h }));
+  } else if (lay.drag.kind === "resize") {
+    const b = lay.boxes[lay.sel];
+    b[lay.drag.kx] = Math.max(0, Math.min(lay.w, x));
+    b[lay.drag.ky] = Math.max(0, Math.min(lay.h, y));
+    Object.assign(b, lNorm(b));
+  }
+  lDraw(); lSelectFields();
+});
+["pointerup", "pointercancel"].forEach(ev => lcv.addEventListener(ev, () => {
+  if (lay.drag && lay.drag.kind === "new") {
+    const b = lay.boxes[lay.sel];
+    if (!b || (b.x1 - b.x0) < 12 || (b.y1 - b.y0) < 12) { lay.boxes.splice(lay.sel, 1); lay.sel = lay.boxes.length - 1; }
+    lSelectFields();
+  }
+  lay.drag = null; lDraw();
+}));
+lcv.addEventListener("pointermove", e => { // cursor feedback
+  if (lay.drag) return;
+  const [x, y] = lCanvasPos(e);
+  lcv.style.cursor = (lay.sel >= 0 && lay.boxes[lay.sel] && lNearCorner(x, y, lay.boxes[lay.sel])) ? "nwse-resize"
+    : lHit(x, y) >= 0 ? "move" : "crosshair";
+});
+
+function lSelectFields() {
+  const b = lay.boxes[lay.sel];
+  $("#llabel").disabled = $("#lcaption").disabled = $("#ltext").disabled = $("#ldelete").disabled = !b;
+  if (!b) { $("#lcoord").textContent && lDraw(); return; }
+  $("#llabel").value = b.label; $("#lcaption").value = b.caption || ""; $("#ltext").value = b.text || "";
+  $("#ltext").disabled = b.label !== "text";
+}
+$("#llabel").onchange = () => { const b = lay.boxes[lay.sel]; if (b) { b.label = $("#llabel").value; if (b.label !== "text") delete b.text; lSelectFields(); lDraw(); } };
+$("#ltext").oninput = () => { const b = lay.boxes[lay.sel]; if (b) { b.text = $("#ltext").value; lDraw(); } };
+$("#lcaption").oninput = () => { const b = lay.boxes[lay.sel]; if (b) { b.caption = $("#lcaption").value; lDraw(); } };
+$("#ldelete").onclick = () => { if (lay.sel >= 0) { lay.boxes.splice(lay.sel, 1); lay.sel = lay.boxes.length - 1; lSelectFields(); lDraw(); } };
+$("#lscene").oninput = () => lDraw();
+["#lw", "#lh"].forEach(id => $(id).onchange = () => {
+  lay.w = Math.max(256, +$("#lw").value || 1024); lay.h = Math.max(256, +$("#lh").value || 1024);
+  $("#lw").value = lay.w; $("#lh").value = lay.h;
+  lay.boxes = lay.boxes.map(b => lClamp(b));
+  lResizeCanvas(); lSelectFields();
+});
+$("#lcopy").onclick = () => { navigator.clipboard.writeText($("#ljson").textContent); };
+$("#lgo").onclick = async () => {
+  if (!lay.boxes.length) { alert("Draw at least one box."); return; }
+  if (!$("#lscene").value.trim()) { alert("Write a scene caption."); return; }
+  const body = {
+    prompt: $("#ljson").textContent, width: lay.w, height: lay.h,
+    quality: $("#lq").value, seed: +$("#lseed").value, batch: 1,
+    upscale: $("#lups").value === "1", tag: "layout",
+  };
+  const r = await fetch("/api/generate", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  const j = await r.json();
+  if (j.error) alert(j.error);
+  refresh();
+};
+// starter example (travel poster) so the tab demos itself
+lay.boxes = [
+  { label: "text", caption: "Large dark-blue uppercase title centered at the top.", text: "EXPLORE",
+    x0: 128, y0: 64, x1: 896, y1: 224 },
+  { label: "object", caption: "A flat blue mountain illustration in the lower center.",
+    x0: 320, y0: 480, x1: 704, y1: 896 },
+];
+lResizeCanvas();
 
 const ST_LABEL = {queued: "queued", running: "rendering", done: "done", failed: "failed", cancelled: "cancelled"};
 function renderQueue(jobs) {

@@ -285,7 +285,8 @@ def _enqueue(payload):
             init_name, _, _ = _save_dataurl(init_name)
     except ValueError as e:
         return None, f"bad mask/image: {e}"
-    mode = "inpaint" if (init_name and mask_name) else ("restyle" if init_name else "txt2img")
+    mode = payload.get("tag") or ("inpaint" if (init_name and mask_name)
+                                  else ("restyle" if init_name else "txt2img"))
     with _lock:
         for _ in range(batch):
             job = {
