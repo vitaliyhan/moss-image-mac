@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MOSS Image — Mac</title>
+<style>
+:root {
+  --bg: #0e1116; --panel: #161b24; --panel2: #1d2430; --line: #2a3342;
+  --text: #e6ebf2; --dim: #8b96a8; --accent: #5b9dff; --accent2: #7c6cff;
+  --ok: #4cc38a; --bad: #ff6b6b; --warn: #f5b759;
+  font-size: 15px;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font-family: -apple-system, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+}
+header {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 22px; border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(10px); z-index: 10;
+}
+header h1 { font-size: 17px; margin: 0; font-weight: 650; letter-spacing: .2px; }
+header h1 span { color: var(--accent); }
+#backend {
+  font-size: 12px; padding: 3px 10px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--dim);
+}
+#backend.up    { color: var(--ok);   border-color: var(--ok); }
+#backend.start { color: var(--warn); border-color: var(--warn); }
+#backend.err   { color: var(--bad);  border-color: var(--bad); }
+#backend.detail { color: var(--dim); border: none; padding: 0; }
+header .sp { flex: 1; }
+button.hdr {
+  font-size: 12.5px; padding: 5px 12px; border-radius: 8px; cursor: pointer;
+  background: var(--panel2); border: 1px solid var(--line); color: var(--dim);
+}
+button.hdr:hover { color: var(--text); border-color: var(--accent); }
+button.hdr.danger:hover { color: var(--bad); border-color: var(--bad); }
+main { display: grid; grid-template-columns: 360px 1fr; min-height: calc(100vh - 57px); }
+@media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+
+/* ---------- left column ---------- */
+#side { border-right: 1px solid var(--line); padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+textarea#prompt {
+  width: 100%; min-height: 130px; resize: vertical;
+  background: var(--panel2); color: var(--text);
+  border: 1px solid var(--line); border-radius: 12px; padding: 12px;
+  font: inherit; line-height: 1.45;
+}
+textarea#prompt:focus { outline: none; border-color: var(--accent); }
+label { display: block; font-size: 12px; color: var(--dim); margin: 0 0 6px 2px; text-transform: uppercase; letter-spacing: .6px; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; }
+.chip {
+  cursor: pointer; font-size: 13px; padding: 6px 12px; border-radius: 9px;
+  background: var(--panel2); border: 1px solid var(--line); color: var(--text);
+}
+.chip:hover { border-color: var(--accent); }
+.chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+input[type=number], select {
+  width: 100%; background: var(--panel2); color: var(--text);
+  border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; font: inherit;
+}
+input[type=number]:focus, select:focus { outline: none; border-color: var(--accent); }
+#go {
+  width: 100%; padding: 13px; border: none; border-radius: 12px; cursor: pointer;
+  font: inherit; font-weight: 650; font-size: 15px; color: #fff;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+}
+#go:disabled { opacity: .45; cursor: default; }
+
+/* ---------- queue ---------- */
+#queue { display: flex; flex-direction: column; gap: 8px; }
+.job {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px;
+}
+.job .top { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.job .prompt-text {
+  font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1;
+}
+.job .st { font-size: 11px; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.st.queued   { color: var(--dim);  border: 1px solid var(--line); }
+.st.running  { color: var(--accent); border: 1px solid var(--accent); }
+.st.done     { color: var(--ok);   border: 1px solid var(--ok); }
+.st.failed   { color: var(--bad);  border: 1px solid var(--bad); }
+.st.cancelled{ color: var(--warn); border: 1px solid var(--warn); }
+.bar { height: 5px; border-radius: 3px; background: var(--panel2); margin-top: 8px; overflow: hidden; }
+.bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent2)); transition: width .5s; }
+.meta { font-size: 11.5px; color: var(--dim); margin-top: 6px; }
+.meta .err { color: var(--bad); }
+button.x {
+  border: none; background: none; color: var(--dim); cursor: pointer; font-size: 13px; padding: 2px 6px;
+}
+button.x:hover { color: var(--bad); }
+button.link { border: none; background: none; color: var(--accent); cursor: pointer; font-size: 12px; padding: 2px 4px; }
+
+/* ---------- gallery ---------- */
+#gallery-wrap { padding: 20px 26px 60px; }
+#gtools { display: flex; align-items: center; gap: 8px; margin: 0 0 14px; flex-wrap: wrap; }
+#gtools h2 { font-size: 14px; color: var(--dim); font-weight: 500; margin: 0; }
+#gtools .sp { flex: 1; }
+#gtools label.inline { margin: 0; text-transform: none; letter-spacing: 0; font-size: 12.5px; }
+#gtools select { width: auto; padding: 5px 8px; font-size: 13px; }
+#gpage { font-size: 12.5px; color: var(--dim); min-width: 44px; text-align: center; }
+#gcount { color: var(--dim); font-weight: 400; }
+#gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px; }
+.card {
+  position: relative; border-radius: 14px; overflow: hidden; cursor: zoom-in;
+  background: var(--panel); border: 1px solid var(--line); aspect-ratio: 1;
+}
+.card img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.card .name {
+  position: absolute; inset: auto 0 0 0; padding: 18px 10px 8px;
+  background: linear-gradient(transparent, rgba(0,0,0,.75));
+  font-size: 11px; color: #dfe6ef; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+#empty, #g-empty { color: var(--dim); font-size: 14px; padding: 40px 0; text-align: center; }
+
+/* ---------- lightbox ---------- */
+#lb {
+  position: fixed; inset: 0; background: rgba(5,8,12,.92); display: none;
+  z-index: 50; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+}
+#lb.open { display: flex; }
+#lb img { max-width: 92vw; max-height: 80vh; border-radius: 12px; box-shadow: 0 10px 60px rgba(0,0,0,.6); }
+#lb .row { justify-content: center; }
+#lb a, #lb button {
+  font-size: 14px; color: var(--text); text-decoration: none; background: var(--panel2);
+  border: 1px solid var(--line); border-radius: 9px; padding: 8px 16px; cursor: pointer;
+}
+#lb a:hover, #lb button:hover { border-color: var(--accent); }
+#lbname { color: var(--dim); font-size: 12.5px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>MOSS <span>Image</span></h1>
+  <span id="backend">…</span>
+  <span id="backend-detail"></span>
+  <span class="sp"></span>
+  <button class="hdr" id="stopbackend" title="Unload models from memory (frees ~8 GB GPU/RAM)">Stop backend</button>
+  <button class="hdr danger" id="quit" title="Stop backend and close this web UI">Quit</button>
+</header>
+<main>
+  <div id="side">
+    <div>
+      <label for="prompt">Prompt</label>
+      <textarea id="prompt" placeholder="Опишите изображение… например: уютная московская улица на закате, вывеска «МОСКВА»"></textarea>
+    </div>
+    <div>
+      <label>Aspect ratio</label>
+      <div class="row" id="ratios"></div>
+    </div>
+    <div class="grid2">
+      <div><label for="w">Width</label><input id="w" type="number" value="1024" step="16" min="256" max="1536"></div>
+      <div><label for="h">Height</label><input id="h" type="number" value="1024" step="16" min="256" max="1536"></div>
+    </div>
+    <div class="grid2">
+      <div><label for="q">Quality</label>
+        <select id="q">
+          <option value="draft">Draft — 3 steps (~15 s)</option>
+          <option value="standard" selected>Standard — 4 steps (~25 s)</option>
+          <option value="high">High — 50 steps (~10 min)</option>
+        </select>
+      </div>
+      <div><label for="seed">Seed (-1 random)</label><input id="seed" type="number" value="-1"></div>
+    </div>
+    <div class="grid2">
+      <div><label for="batch">Batch</label>
+        <select id="batch"><option>1</option><option>2</option><option>3</option><option>4</option></select>
+      </div>
+      <div><label for="ups">Post</label>
+        <select id="ups"><option value="">none</option><option value="1">upscale 2x</option></select>
+      </div>
+    </div>
+    <button id="go">Generate</button>
+    <div>
+      <label>Queue</label>
+      <div id="queue"><div id="empty">Queue is empty.</div></div>
+    </div>
+  </div>
+
+  <div id="gallery-wrap">
+    <div id="gtools">
+      <h2>Gallery — outputs/ <span id="gcount"></span></h2>
+      <span class="sp"></span>
+      <label class="inline" for="gsort">Sort</label>
+      <select id="gsort">
+        <option value="mtime_desc" selected>Date (new first)</option>
+        <option value="mtime_asc">Date (old first)</option>
+        <option value="size_desc">Size (large first)</option>
+        <option value="size_asc">Size (small first)</option>
+      </select>
+      <label class="inline" for="gper">Show</label>
+      <select id="gper">
+        <option value="10" selected>10</option>
+        <option value="50">50</option>
+        <option value="100">100</option>
+        <option value="all">All</option>
+      </select>
+      <button class="hdr" id="gprev" title="Previous page">‹</button>
+      <span id="gpage">1 / 1</span>
+      <button class="hdr" id="gnext" title="Next page">›</button>
+    </div>
+    <div id="gallery"></div>
+    <div id="g-empty">No images yet — generate your first one.</div>
+  </div>
+</main>
+
+<div id="lb">
+  <img id="lbimg" alt="">
+  <div id="lbname"></div>
+  <div class="row">
+    <button id="lbprev" title="←">‹ Prev</button>
+    <a id="lbdl" download>Download</a>
+    <button id="lbup">Upscale 2x</button>
+    <button id="lbdel">Delete</button>
+    <button id="lbnext" title="→">Next ›</button>
+    <button id="lbclose">Close</button>
+  </div>
+</div>
+
+<script>
+const RATIOS = [
+  ["1:1", 1024, 1024], ["3:2", 1152, 768], ["2:3", 768, 1152],
+  ["16:9", 1344, 768], ["9:16", 768, 1344], ["4:3", 1024, 768], ["3:4", 768, 1024],
+];
+const $ = s => document.querySelector(s);
+const galleryEl = $("#gallery"), queueEl = $("#queue"), emptyG = $("#g-empty"), emptyQ = $("#queue #empty");
+
+// restore settings
+for (const [k, id] of [["prompt","prompt"],["w","w"],["h","h"],["q","q"],["seed","seed"],["batch","batch"],["ups","ups"]])
+  if (localStorage.getItem("moss_" + k) !== null) $("#" + id).value = localStorage.getItem("moss_" + k);
+
+// ratio chips
+let curRatio = null;
+const ratioBox = $("#ratios");
+for (const [label, w, h] of RATIOS) {
+  const b = document.createElement("button");
+  b.className = "chip"; b.textContent = label;
+  if (+$("#w").value === w && +$("#h").value === h) { b.classList.add("on"); curRatio = b; }
+  b.onclick = () => {
+    $("#w").value = w; $("#h").value = h;
+    if (curRatio) curRatio.classList.remove("on");
+    b.classList.add("on"); curRatio = b; save();
+  };
+  ratioBox.append(b);
+}
+const save = () => { for (const [k, id] of [["prompt","prompt"],["w","w"],["h","h"],["q","q"],["seed","seed"],["batch","batch"],["ups","ups"]]) localStorage.setItem("moss_" + k, $("#" + id).value); };
+for (const id of ["prompt","w","h","q","seed","batch","ups"]) $("#" + id).addEventListener("change", save);
+
+$("#go").onclick = async () => {
+  const body = {
+    prompt: $("#prompt").value, width: +$("#w").value, height: +$("#h").value,
+    quality: $("#q").value, seed: +$("#seed").value,
+    batch: +$("#batch").value, upscale: $("#ups").value === "1",
+  };
+  const r = await fetch("/api/generate", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  const j = await r.json();
+  if (j.error) alert(j.error);
+  refresh();
+};
+$("#prompt").addEventListener("keydown", e => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") $("#go").click(); });
+
+const ST_LABEL = {queued: "queued", running: "rendering", done: "done", failed: "failed", cancelled: "cancelled"};
+function renderQueue(jobs) {
+  queueEl.replaceChildren();
+  if (!jobs.length) { queueEl.append(emptyQ); emptyQ.textContent = "Queue is empty."; return; }
+  for (const j of [...jobs].reverse()) {
+    const d = document.createElement("div"); d.className = "job";
+    const top = document.createElement("div"); top.className = "top";
+    const pt = document.createElement("div"); pt.className = "prompt-text"; pt.textContent = j.prompt; pt.title = j.prompt;
+    const st = document.createElement("span"); st.className = "st " + j.state; st.textContent = ST_LABEL[j.state] || j.state;
+    top.append(pt, st); d.append(top);
+    if (j.state === "running" || j.state === "queued") {
+      const bar = document.createElement("div"); bar.className = "bar";
+      const fill = document.createElement("i");
+      if (j.total) fill.style.width = Math.round(100 * j.step / j.total) + "%";
+      else if (j.state === "running") fill.style.width = "8%";
+      bar.append(fill); d.append(bar);
+    }
+    const meta = document.createElement("div"); meta.className = "meta";
+    let txt = `${j.params.width}×${j.params.height} · ${j.params.steps} steps`;
+    if (j.state === "running" && j.total) txt = `step ${j.step}/${j.total} — ${j.message || ""}`;
+    else if (j.state === "running") txt = j.message || "working…";
+    if (j.state === "done") txt += ` · ${j.secs}s · ${j.path}`;
+    if (j.state === "failed" && j.error) txt = j.error;
+    meta.textContent = txt; d.append(meta);
+    if (j.state === "queued" || j.state === "running") {
+      const x = document.createElement("button"); x.className = "x"; x.textContent = "✕";
+      x.onclick = () => fetch("/api/cancel", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({id: j.id})});
+      st.after(x);
+    }
+    queueEl.append(d);
+  }
+}
+
+let gallery = [];
+let gSort = localStorage.getItem("moss_gsort") || "mtime_desc";
+let gPer = localStorage.getItem("moss_gper") || "10";
+let gPage = 1;
+$("#gsort").value = gSort; $("#gper").value = gPer;
+$("#gsort").onchange = () => { gSort = $("#gsort").value; gPage = 1; localStorage.setItem("moss_gsort", gSort); renderGallery(); };
+$("#gper").onchange = () => { gPer = $("#gper").value; gPage = 1; localStorage.setItem("moss_gper", gPer); renderGallery(); };
+$("#gprev").onclick = () => { if (gPage > 1) { gPage--; renderGallery(); } };
+$("#gnext").onclick = () => { if (gPage < gTotalPages()) { gPage++; renderGallery(); } };
+function gSorted() {
+  const [key, dir] = gSort.split("_");
+  const s = [...gallery].sort((a, b) => key === "size" ? a.size - b.size : a.mtime - b.mtime);
+  return dir === "desc" ? s.reverse() : s;
+}
+function gTotalPages() { return gPer === "all" ? 1 : Math.max(1, Math.ceil(gallery.length / +gPer)); }
+function renderGallery() {
+  gPage = Math.min(gPage, gTotalPages());
+  const list = gSorted();
+  const start = gPer === "all" ? 0 : (gPage - 1) * +gPer;
+  const pageItems = gPer === "all" ? list : list.slice(start, start + +gPer);
+  $("#gpage").textContent = gTotalPages() > 1 ? `${gPage} / ${gTotalPages()}` : "1 / 1";
+  $("#gcount").textContent = gallery.length ? `· ${gallery.length} images` : "";
+  $("#gprev").disabled = gPage <= 1;
+  $("#gnext").disabled = gPage >= gTotalPages();
+  galleryEl.replaceChildren();
+  emptyG.style.display = gallery.length ? "none" : "";
+  if (!gallery.length) return;
+  for (const g of pageItems) {
+    const c = document.createElement("div"); c.className = "card";
+    const img = document.createElement("img"); img.loading = "lazy"; img.src = "/media?src=" + encodeURIComponent(g.src);
+    const nm = document.createElement("div"); nm.className = "name";
+    nm.textContent = new Date(g.mtime * 1000).toLocaleString() + " · " + fmtSize(g.size) + (g.managed ? "" : " · 📁");
+    c.append(img, nm);
+    c.onclick = () => openLb(g);
+    galleryEl.append(c);
+  }
+}
+const fmtSize = n => n > 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.round(n / 1024) + " KB";
+
+let lbName = null, lbCur = null;
+function lbStep(delta) {
+  const list = gSorted();
+  if (!list.length) return;
+  const i = list.findIndex(g => g.name === lbName);
+  const next = list[((i === -1 ? 0 : i) + delta + list.length) % list.length];
+  openLb(next);
+}
+function openLb(g) {
+  lbCur = g;
+  lbName = g.name;
+  $("#lbimg").src = "/media?src=" + encodeURIComponent(g.src);
+  $("#lbname").textContent = g.name + " · " + fmtSize(g.size);
+  $("#lbdl").href = "/media?src=" + encodeURIComponent(g.src);
+  $("#lbdel").style.display = g.managed ? "" : "none";
+  $("#lbup").style.display = g.managed ? "" : "none";
+  $("#lb").classList.add("open");
+}
+$("#lbprev").onclick = () => lbStep(-1);
+$("#lbnext").onclick = () => lbStep(1);
+$("#lbclose").onclick = () => $("#lb").classList.remove("open");
+$("#lb").addEventListener("click", e => { if (e.target === $("#lb")) $("#lb").classList.remove("open"); });
+$("#lbdel").onclick = async () => {
+  await fetch("/api/delete", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({src: lbCur.src})});
+  $("#lb").classList.remove("open"); refresh();
+};
+$("#lbup").onclick = async () => {
+  $("#lbup").textContent = "Upscaling…";
+  const r = await fetch("/api/upscale", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({src: lbCur.src})});
+  const j = await r.json();
+  $("#lbup").textContent = "Upscale 2x";
+  if (j.ok) { $("#lb").classList.remove("open"); refresh(); } else alert(j.error);
+};
+$("#stopbackend").onclick = async () => {
+  if (!confirm("Stop the MOSS backend? Models unload (~8 GB freed); a running render will fail.")) return;
+  await fetch("/api/stop-backend", {method: "POST"});
+  refresh();
+};
+$("#quit").onclick = async () => {
+  if (!confirm("Quit? This stops the backend and closes the UI server (the page will stop responding).")) return;
+  try { await fetch("/api/shutdown", {method: "POST"}); } catch {}
+  const b = $("#backend"); b.textContent = "○ UI stopped — relaunch from the desktop shortcut"; b.className = "";
+  $("#backend-detail").textContent = "";
+};
+document.addEventListener("keydown", e => {
+  if (!$("#lb").classList.contains("open")) return;
+  if (e.key === "Escape") $("#lb").classList.remove("open");
+  else if (e.key === "ArrowLeft") lbStep(-1);
+  else if (e.key === "ArrowRight") lbStep(1);
+});
+
+async function refresh() {
+  try {
+    const s = await (await fetch("/api/state")).json();
+    const b = $("#backend");
+    if (s.backend.state === "up") { b.textContent = "● backend ready"; b.className = "up"; }
+    else if (s.backend.state === "starting") { b.textContent = "◐ loading models…"; b.className = "start"; }
+    else if (s.backend.state === "error") { b.textContent = "○ backend error"; b.className = "err"; }
+    else { b.textContent = "○ backend offline"; b.className = ""; }
+    $("#backend-detail").textContent = s.backend.detail || "";
+    renderQueue(s.jobs);
+    const newNames = s.gallery.map(g => g.name).join();
+    if (newNames !== gallery.map(g => g.name).join()) { gallery = s.gallery; renderGallery(); }
+  } catch (e) { console.warn("refresh failed:", e); }
+}
+refresh();
+setInterval(refresh, 1000);
+</script>
+</body>
+</html>

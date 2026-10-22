@@ -174,14 +174,14 @@ def _looks_blank(png_bytes):
     return ImageStat.Stat(img).stddev[0] < 2.0
 
 
-def _run(body, out, timeout=600, on_progress=None, cancel_event=None):
+def _run(body, out, timeout=600, on_progress=None, cancel_event=None, preview=False):
     """Submit a job, report progress, and write the PNG to `out`.
 
     on_progress(step, total, message) is called as the job moves through the queue and sampler.
     cancel_event (threading.Event) cancels the server job when set. Any failure, timeout or
     interruption cancels the job so it never blocks the queue for other callers.
     """
-    if on_progress and not body.get("lora"):
+    if on_progress and (preview or not body.get("lora")):
         # Step-level progress needs cheap latent-projection previews (~1% overhead), so they are
         # only enabled for long full-model ("high") renders; turbo jobs report queue/run state.
         body = {**body, "preview": "proj", "preview_interval": 1}
@@ -237,7 +237,7 @@ def _run(body, out, timeout=600, on_progress=None, cancel_event=None):
 
 def generate(prompt, width=768, height=768, seed=-1, out="out.png", steps=4,
              init_image=None, mask_image=None, strength=0.75, on_progress=None,
-             cancel_event=None):
+             cancel_event=None, preview=False):
     """Text-to-image, img2img (init_image) or inpainting (init_image + mask_image).
 
     steps: 3 (draft) or 4 (standard) use the turbo LoRAs; any other value (e.g. 50 = "high")
@@ -279,7 +279,8 @@ def generate(prompt, width=768, height=768, seed=-1, out="out.png", steps=4,
         body["init_image"] = _b64(init_image)
     if mask_image:
         body["mask_image"] = _b64(mask_image)
-    return _run(body, out, timeout=timeout, on_progress=on_progress, cancel_event=cancel_event)
+    return _run(body, out, timeout=timeout, on_progress=on_progress,
+                cancel_event=cancel_event, preview=preview)
 
 
 def upscale(path, out=None, scale=2):

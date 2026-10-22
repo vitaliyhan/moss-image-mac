@@ -65,6 +65,8 @@ cd moss-image-mac
 ```
 
 `setup.sh` downloads the runtime and model files at pinned versions and checks each one against its SHA-256 checksum.
+Model downloads go through the [hf-mirror.com](https://hf-mirror.com) mirror by default; set `HF_ENDPOINT` to use a
+different one (e.g. `HF_ENDPOINT=https://huggingface.co ./setup.sh`).
 It also converts the turbo LoRAs to fp16 and creates `.venv` with the four Python dependencies. If a download is
 interrupted, re-running resumes it, and files that are already complete are skipped. At the end it prints the exact
 MCP config for your checkout.
@@ -74,6 +76,16 @@ Try it:
 ```bash
 ./generate.sh "a lovely cat holding a sign that says 'hello mac'"
 ```
+
+Or use the web UI — prompt, queue with live progress, gallery of everything in `outputs/`,
+and size / quality / seed / batch settings:
+
+```bash
+./start_ui.sh        # opens http://127.0.0.1:7877
+```
+
+The UI starts the MOSS backend on demand (the first render pays the ~15 s model load) and
+renders one job at a time through the same backend the CLI and MCP server use.
 
 ## Connect it to your app (MCP)
 

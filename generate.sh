@@ -10,8 +10,8 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 PROMPT="${1:-a lovely cat holding a sign that says 'MOSS on Mac'}"
-W="${2:-768}"
-H="${3:-432}"
+W="${2:-1024}"
+H="${3:-1024}"
 SEED="${4:--1}"
 QUALITY="${5:-standard}"
 PORT="${MOSS_PORT:-18765}"

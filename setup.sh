@@ -22,7 +22,9 @@ SDCPP_COMMIT="95b3090"
 SDCPP_ZIP="sd-master-95b3090-bin-Darwin-macOS-26.6.2-arm64.zip"
 SDCPP_SHA="2edf5a21c4b73f448c3a02c87925283b77aa94f1859c0d8e649134da68b40813"
 
-HF="https://huggingface.co"
+# Downloads go through the hf-mirror.com mirror by default; set HF_ENDPOINT to override
+# (e.g. HF_ENDPOINT=https://huggingface.co ./setup.sh).
+HF="${HF_ENDPOINT:-https://hf-mirror.com}"
 # dest | url | sha256
 MODELS=(
   "models/diffusion_models/MOSS-Image-SFT-Q4_0.gguf|$HF/leejet/MOSS-Image-SFT-GGUF/resolve/238daf423f0de65316207453591f275407aac9a7/MOSS-Image-SFT-Q4_0.gguf|b59d2461fa431d670471f74ab54fd90a0bfb36799fd3ffbec1cf103568a883b8"
