@@ -11,6 +11,6 @@ for f in moss_ui.py ui/index.html; do
 done
 [[ -x .venv/bin/python ]] || { echo "error: .venv missing - run ./setup.sh first" >&2; exit 1; }
 
-if command -v open >/dev/null; then (sleep 1; open "http://127.0.0.1:${MOSS_UI_PORT:-7877}") & fi
+if command -v open >/dev/null; then (sleep 1; open "http://127.0.0.1:${MOSS_UI_PORT:-7877}/?v=$(date +%s)") & fi
 
 exec .venv/bin/python moss_ui.py
