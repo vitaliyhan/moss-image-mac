@@ -156,7 +156,7 @@ button.link { border: none; background: none; color: var(--accent); cursor: poin
   z-index: 50; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
 }
 #lb.open { display: flex; }
-#lb img { max-width: 92vw; max-height: 80vh; border-radius: 12px; box-shadow: 0 10px 60px rgba(0,0,0,.6); }
+#lb img { max-width: 92vw; max-height: 72vh; border-radius: 12px; box-shadow: 0 10px 60px rgba(0,0,0,.6); }
 #lb .row { justify-content: center; }
 #lb a, #lb button {
   font-size: 14px; color: var(--text); text-decoration: none; background: var(--panel2);
@@ -164,6 +164,12 @@ button.link { border: none; background: none; color: var(--accent); cursor: poin
 }
 #lb a:hover, #lb button:hover { border-color: var(--accent); }
 #lbname { color: var(--dim); font-size: 12.5px; }
+#lbmeta {
+  max-width: 92vw; font-size: 12.5px; color: var(--dim); text-align: center;
+  line-height: 1.5; user-select: text;
+}
+#lbmeta .prompt { color: var(--text); }
+#lbmeta .muted { opacity: .7; }
 </style>
 </head>
 <body>
@@ -201,10 +207,13 @@ button.link { border: none; background: none; color: var(--accent); cursor: poin
           <select id="q">
             <option value="draft">Draft — 3 steps (~15 s)</option>
             <option value="standard" selected>Standard — 4 steps (~25 s)</option>
-            <option value="high">High — 50 steps (~10 min)</option>
+            <option value="high">High — steps below (~10 min)</option>
           </select>
         </div>
         <div><label for="seed">Seed (-1 random)</label><input id="seed" type="number" value="-1"></div>
+      </div>
+      <div class="grid2" id="stepsrow" style="display:none">
+        <div><label for="steps">Steps (1-100)</label><input id="steps" type="number" value="50" min="1" max="100"></div>
       </div>
       <div class="grid2">
         <div><label for="batch">Batch</label>
@@ -255,12 +264,15 @@ button.link { border: none; background: none; color: var(--accent); cursor: poin
           <select id="eq">
             <option value="draft">Draft — 3 steps</option>
             <option value="standard" selected>Standard — 4 steps</option>
-            <option value="high">High — 50 steps</option>
+            <option value="high">High — steps below</option>
           </select>
         </div>
         <div><label for="eups">Post</label>
           <select id="eups"><option value="">none</option><option value="1">upscale 2x</option></select>
         </div>
+      </div>
+      <div class="grid2" id="estepsrow" style="display:none">
+        <div><label for="esteps">Steps (1-100)</label><input id="esteps" type="number" value="50" min="1" max="100"></div>
       </div>
       <button id="ego">Transform</button>
     </div>
@@ -297,13 +309,16 @@ button.link { border: none; background: none; color: var(--accent); cursor: poin
           <select id="lq">
             <option value="draft">Draft — 3 steps</option>
             <option value="standard" selected>Standard — 4 steps</option>
-            <option value="high">High — 50 steps</option>
+            <option value="high">High — steps below</option>
           </select>
         </div>
         <div><label for="lseed">Seed (-1 random)</label><input id="lseed" type="number" value="-1"></div>
       </div>
       <div><label for="lups">Post</label>
         <select id="lups"><option value="">none</option><option value="1">upscale 2x</option></select>
+      </div>
+      <div class="grid2" id="lstepsrow" style="display:none">
+        <div><label for="lsteps">Steps (1-100)</label><input id="lsteps" type="number" value="50" min="1" max="100"></div>
       </div>
       <details style="font-size:12.5px">
         <summary style="cursor:pointer;color:var(--dim)">Structured prompt (JSON)</summary>
@@ -348,6 +363,7 @@ button.link { border: none; background: none; color: var(--accent); cursor: poin
 
 <div id="lb">
   <img id="lbimg" alt="">
+  <div id="lbmeta"></div>
   <div id="lbname"></div>
   <div class="row">
     <button id="lbprev" title="←">‹ Prev</button>
@@ -368,7 +384,7 @@ const $ = s => document.querySelector(s);
 const galleryEl = $("#gallery"), queueEl = $("#queue"), emptyG = $("#g-empty"), emptyQ = $("#queue #empty");
 
 // restore settings
-for (const [k, id] of [["prompt","prompt"],["w","w"],["h","h"],["q","q"],["seed","seed"],["batch","batch"],["ups","ups"]])
+for (const [k, id] of [["prompt","prompt"],["w","w"],["h","h"],["q","q"],["seed","seed"],["batch","batch"],["ups","ups"],["steps","steps"]])
   if (localStorage.getItem("moss_" + k) !== null) $("#" + id).value = localStorage.getItem("moss_" + k);
 
 // ratio chips
@@ -385,17 +401,24 @@ for (const [label, w, h] of RATIOS) {
   };
   ratioBox.append(b);
 }
-const save = () => { for (const [k, id] of [["prompt","prompt"],["w","w"],["h","h"],["q","q"],["seed","seed"],["batch","batch"],["ups","ups"],["eprompt","eprompt"],["estrength","estrength"],["eseed","eseed"],["eq","eq"],["eups","eups"],["lscene","lscene"],["lw","lw"],["lh","lh"],["lq","lq"],["lseed","lseed"],["lups","lups"]]) localStorage.setItem("moss_" + k, $("#" + id).value); };
-for (const id of ["prompt","w","h","q","seed","batch","ups","eprompt","estrength","eseed","eq","eups","lscene","lw","lh","lq","lseed","lups"]) {
+const save = () => { for (const [k, id] of [["prompt","prompt"],["w","w"],["h","h"],["q","q"],["seed","seed"],["batch","batch"],["ups","ups"],["steps","steps"],["eprompt","eprompt"],["estrength","estrength"],["eseed","eseed"],["eq","eq"],["eups","eups"],["esteps","esteps"],["lscene","lscene"],["lw","lw"],["lh","lh"],["lq","lq"],["lseed","lseed"],["lups","lups"],["lsteps","lsteps"]]) localStorage.setItem("moss_" + k, $("#" + id).value); };
+for (const id of ["prompt","w","h","q","seed","batch","ups","steps","eprompt","estrength","eseed","eq","eups","esteps","lscene","lw","lh","lq","lseed","lups","lsteps"]) {
   $("#" + id).addEventListener("input", save);
   $("#" + id).addEventListener("change", save);
 }
 // restore edit/layout values and refresh dependent labels
-["eprompt","estrength","eseed","eq","eups","lscene","lw","lh","lq","lseed","lups"].forEach(id => {
+["eprompt","estrength","eseed","eq","eups","esteps","lscene","lw","lh","lq","lseed","lups","lsteps"].forEach(id => {
   const v = localStorage.getItem("moss_" + id);
   if (v !== null) $("#" + id).value = v;
 });
 $("#estrengthval").textContent = $("#estrength").value;
+
+// the steps field only matters for the full-model ("high") quality
+const syncStepsRow = (qSel, rowId) => { $("#" + rowId).style.display = $("#" + qSel).value === "high" ? "" : "none"; };
+for (const [qSel, rowId] of [["q","stepsrow"],["eq","estepsrow"],["lq","lstepsrow"]]) {
+  $("#" + qSel).addEventListener("change", () => syncStepsRow(qSel, rowId));
+  syncStepsRow(qSel, rowId);
+}
 
 $("#go").onclick = async () => {
   const body = {
@@ -403,6 +426,7 @@ $("#go").onclick = async () => {
     quality: $("#q").value, seed: +$("#seed").value,
     batch: +$("#batch").value, upscale: $("#ups").value === "1",
   };
+  if (body.quality === "high") body.steps = +$("#steps").value || 50;
   const r = await fetch("/api/generate", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
   const j = await r.json();
   if (j.error) alert(j.error);
@@ -504,6 +528,7 @@ $("#ego").onclick = async () => {
     batch: 1, upscale: $("#eups").value === "1",
     strength: +$("#estrength").value, init: edit.name,
   };
+  if (body.quality === "high") body.steps = +$("#esteps").value || 50;
   if (edit.mode === "inpaint") {
     if (typeof maskCv.toBlob !== "function") return;
     const maskData = await new Promise(res => maskCv.toBlob(b => {
@@ -681,6 +706,7 @@ $("#lgo").onclick = async () => {
     quality: $("#lq").value, seed: +$("#lseed").value, batch: 1,
     upscale: $("#lups").value === "1", tag: "layout",
   };
+  if (body.quality === "high") body.steps = +$("#lsteps").value || 50;
   const r = await fetch("/api/generate", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
   const j = await r.json();
   if (j.error) alert(j.error);
@@ -782,6 +808,25 @@ function openLb(g) {
   lbName = g.name;
   $("#lbimg").src = "/media?src=" + encodeURIComponent(g.src);
   $("#lbname").textContent = g.name + " · " + fmtSize(g.size);
+  const metaEl = $("#lbmeta");
+  metaEl.replaceChildren();
+  fetch("/api/meta?src=" + encodeURIComponent(g.src))
+    .then(r => r.ok ? r.json() : null)
+    .then(m => {
+      if (!m || lbName !== g.name) return;  // user already navigated to another image
+      const promptLine = document.createElement("div");
+      promptLine.className = "prompt";
+      promptLine.textContent = m.prompt;
+      const info = [`${m.width}×${m.height}`, `seed ${m.seed}`, `${m.steps} steps`, m.mode];
+      if (m.mode !== "txt2img" && m.strength) info.push(`strength ${m.strength}`);
+      if (m.upscale) info.push("upscaled 2x");
+      if (m.secs) info.push(`${m.secs}s`);
+      const infoLine = document.createElement("div");
+      infoLine.className = "muted";
+      infoLine.textContent = info.join(" · ");
+      metaEl.append(promptLine, infoLine);
+    })
+    .catch(() => {});
   $("#lbdl").href = "/media?src=" + encodeURIComponent(g.src);
   $("#lbdel").style.display = g.managed ? "" : "none";
   $("#lbup").style.display = g.managed ? "" : "none";

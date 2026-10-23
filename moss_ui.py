@@ -12,6 +12,7 @@ queue but the finished images stay in outputs/.
 import base64
 import json
 import os
+import random
 import subprocess
 import sys
 import threading
@@ -27,6 +28,7 @@ from moss_client import (MossError, QUALITY_STEPS, validate_size)
 UI_PORT = int(os.environ.get("MOSS_UI_PORT", "7877"))
 OUTPUTS = os.path.join(ROOT, "outputs")
 UPLOADS = os.path.join(OUTPUTS, ".uploads")  # uploaded init/mask images; hidden from the gallery
+METAS = os.path.join(OUTPUTS, ".meta")       # per-image generation metadata (<name>.png.json)
 BACKEND_START_TIMEOUT = 180  # seconds for the ~15 s model load on a cold start
 
 # Largest canvas we accept for an uploaded image (matches the model's limits: the turbo
@@ -95,6 +97,28 @@ def _public_state():
     with _lock:
         jobs = [{k: v for k, v in j.items() if k != "cancel"} for j in _jobs]
     return {"backend": _backend, "jobs": jobs, "gallery": _scan_gallery()}
+
+
+# ------------------------------------------------------------------ generation metadata
+def _meta_path(img_path):
+    return os.path.join(METAS, os.path.basename(img_path) + ".json")
+
+
+def _write_meta(img_path, meta):
+    try:
+        os.makedirs(METAS, exist_ok=True)
+        with open(_meta_path(img_path), "w") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=1)
+    except OSError:
+        pass  # metadata is a nice-to-have; never fail a finished render over it
+
+
+def _read_meta(img_path):
+    try:
+        with open(_meta_path(img_path)) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
 
 
 # ------------------------------------------------------------------ backend management
@@ -223,6 +247,9 @@ def _run_job(job):
 
     p = job["params"]
     out = os.path.join(OUTPUTS, f"moss_{time.strftime('%Y%m%d_%H%M%S')}_{job['id']}.png")
+    seed = p["seed"]
+    if seed == -1:  # roll the random seed here so the metadata can record the real one
+        seed = random.randrange(2**31)
 
     def on_progress(step, total, message):
         with _lock:
@@ -234,7 +261,7 @@ def _run_job(job):
         if p.get("init") and not init_path:
             raise MossError("uploaded image is gone - pick the file again")
         return moss_client.generate(
-            p["prompt"], width=p["width"], height=p["height"], seed=p["seed"],
+            p["prompt"], width=p["width"], height=p["height"], seed=seed,
             out=out, steps=p["steps"], strength=p["strength"],
             init_image=init_path, mask_image=mask_path,
             on_progress=on_progress, cancel_event=ev, preview=True)
@@ -253,6 +280,10 @@ def _run_job(job):
                 raise
             _dbg("generate attempt 2")
             path, secs = run_generate()
+        _write_meta(out, {"mode": job["mode"], "prompt": p["prompt"],
+                          "width": p["width"], "height": p["height"], "seed": seed,
+                          "steps": p["steps"], "strength": p["strength"],
+                          "upscale": p["upscale"], "secs": round(secs, 1)})
         if p["upscale"]:
             with _lock:
                 job["message"] = "upscaling 2x"
@@ -282,6 +313,14 @@ def _enqueue(payload):
     quality = payload.get("quality", "standard")
     if quality not in QUALITY_STEPS:
         return None, f"quality must be one of {sorted(QUALITY_STEPS)}"
+    steps = QUALITY_STEPS[quality]
+    if quality == "high":  # turbo presets have fixed LoRA schedules; only high is tunable
+        try:
+            steps = int(payload.get("steps", steps))
+        except (TypeError, ValueError):
+            return None, "steps is not a number"
+        if not 1 <= steps <= 100:
+            return None, "steps must be 1-100"
     try:
         seed = int(payload.get("seed", -1))
         batch = max(1, min(int(payload.get("batch", 1)), 8))
@@ -308,7 +347,7 @@ def _enqueue(payload):
                 "id": _next_id[0], "state": "queued", "prompt": prompt[:200],
                 "mode": mode,
                 "params": {"prompt": prompt, "width": width, "height": height,
-                           "seed": seed, "steps": QUALITY_STEPS[quality], "strength": strength,
+                           "seed": seed, "steps": steps, "strength": strength,
                            "upscale": bool(payload.get("upscale")),
                            "init": init_name, "mask": mask_name},
                 "step": 0, "total": None, "message": "queued",
@@ -375,6 +414,15 @@ class Handler(BaseHTTPRequestHandler):
             name = os.path.basename(path[len("/outputs/"):])
             ctype = "image/png" if name.endswith(".png") else "image/jpeg"
             self._file(os.path.join(OUTPUTS, name), ctype, cache="max-age=3600")
+        elif path == "/api/meta":
+            from urllib.parse import parse_qs, urlparse
+            qs = parse_qs(urlparse(self.path).query)
+            fp = _resolve_src((qs.get("src") or [""])[0])
+            meta = _read_meta(fp) if fp and os.path.dirname(fp) == os.path.realpath(OUTPUTS) else None
+            if meta is None:
+                self._json({"error": "no metadata"}, 404)
+            else:
+                self._json(meta)
         elif path == "/api/gallery-zip":
             self._json({"error": "not implemented"}, 404)
         else:
@@ -413,6 +461,10 @@ class Handler(BaseHTTPRequestHandler):
                 return
             try:
                 os.remove(fp)
+                try:
+                    os.remove(_meta_path(fp))
+                except FileNotFoundError:
+                    pass
                 self._json({"ok": True})
             except FileNotFoundError:
                 self._json({"error": "not found"}, 404)
