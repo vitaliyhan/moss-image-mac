@@ -52,3 +52,35 @@ Bottom line: getting under ~10 s per image without losing quality isn't possible
 image**) and ~25.6 s per step at 1024×576 (about **21.3 min**).
 It uses the same memory as `standard`. Its output was checked to be pixel-identical (mean absolute difference 0.0)
 to a reference `sd-cli` run with the same seed and settings.
+
+## Qwen 2.1 tab (MLX / mflux)
+
+Measured on an Apple-Silicon Mac, 24 GB, mflux 0.24 / mlx 0.32, Qwen-Image-2.1 base 4-bit, 512×512, 20 steps:
+
+| Path | Per image |
+|---|---|
+| mflux CLI (old: one subprocess per render) | ~69 s (spawn + import + load + render) |
+| Persistent worker, first render | ~69 s (spawn + load are ~3 s; weights are page-cached and quantization is lazy) |
+| Persistent worker, subsequent renders | ~68 s idle; back-to-back renders throttle to ~83 s and recover after ~75 s GPU idle |
+
+Notes:
+
+- The worker (`qwen_mlx_server.py`, spawned on demand by `qwen_mlx.py`) keeps weights, compiled graphs and the
+  transformer's text/image-prefix K/V caches resident across renders. The saving is modest at small render sizes
+  (~5-7 s of per-render CLI overhead) and grows with batch jobs, which previously paid it per image.
+- Worker output is pixel-identical to the CLI (same seed, max pixel diff 0). Cancel mid-render leaves the worker
+  reusable; the next render is again pixel-identical.
+- Sustained back-to-back rendering slows down ~17% from GPU boost-clock throttling regardless of runtime; short
+  idle gaps between jobs recover it. Not a worker regression.
+- "Fast prompt encoder" (experimental, UI toggle): swaps the Qwen3-VL-8B encoder for Qwen3.5-0.8B + fusion adapter
+  (~2.1 GB instead of ~17.5 GB download). English prompts only; numerals in rendered text can be wrong.
+  Pre-download with `./setup_qwen.sh small-encoder`.
+- **DMD2 LoRA** (UI toggle "DMD2 — 3-step turbo"): a [DMD2 distillation LoRA](https://hf-mirror.com/linoyts/Qwen-Image-2.1-DMD2-2steps)
+  applied on top of the base weights at load. Trained without CFG; the toggle turns CFG off and runs **3 steps**
+  (2 is the trained minimum, 3 gives a finished image). ~5-8 s per 512² image warm (vs ~32 s for 10 steps × CFG 2.5)
+  at slightly softer detail. Toggling it reloads the resident model (~3 s + ~3 s LoRA bake).
+  Download: `./setup_qwen.sh lora-dmd2`.
+- At resolutions above 1024² pixel area the worker tiles the VAE decode (512 px tiles) to stay off swap.
+- `MOSS_MLX_SUBPROCESS=1` bypasses the worker and shells out to the mflux CLI per render, the old way.
+  Worker lifecycle: spawned lazily, port in `logs/mlx_worker.json`, log in `logs/mlx_worker.log`; it exits when
+  the app that started it exits.

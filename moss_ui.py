@@ -10,6 +10,7 @@ server all stay interoperable. State is in memory only: restarting the UI clears
 queue but the finished images stay in outputs/.
 """
 import base64
+import glob
 import json
 import os
 import random
@@ -23,7 +24,32 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
 
 import moss_client
+import qwen_mlx
 from moss_client import (MossError, QUALITY_STEPS, validate_size)
+
+# Qwen MLX base-model quality ladder (turbo is fixed at 8 steps); "high" = custom.
+MLX_STEPS = {"fast": 10, "draft": 20, "standard": 40}
+
+
+def _ref_aspect_size(width, height, ref_paths):
+    """Fit width/height to the first reference's aspect ratio at the same pixel area.
+
+    Snapped to /32 (Qwen-Image-2.1 requires it) and clamped to the UI's 256-1536
+    range; returns the inputs unchanged when there is no readable reference."""
+    if not ref_paths:
+        return width, height
+    try:
+        from PIL import Image
+        with Image.open(ref_paths[0]) as im:
+            ratio = im.width / max(1, im.height)
+    except Exception:
+        return width, height
+    if not 0.2 < ratio < 5.0:  # degenerate ratio would push one side out of bounds
+        return width, height
+    area = width * height
+    w = max(256, min(1536, int(round((area * ratio) ** 0.5 / 32)) * 32))
+    h = max(256, min(1536, int(round((area / ratio) ** 0.5 / 32)) * 32))
+    return w, h
 
 UI_PORT = int(os.environ.get("MOSS_UI_PORT", "7877"))
 OUTPUTS = os.path.join(ROOT, "outputs")
@@ -52,6 +78,20 @@ _next_id = [1]
 _cancel_events = {}   # job id -> threading.Event, for the job being rendered
 _backend = {"state": "down", "detail": ""}  # down | starting | up | error
 _backend_proc = None
+_backend_mode = None  # which server config is running: "moss" | "qwen"
+
+
+def _gguf_files():
+    """Downloaded Qwen-Image-2.1 GGUF files (base names), newest first by mtime."""
+    pat = os.path.join(ROOT, "models", "diffusion_models", "qwen-image-2.1*.gguf")
+    files = [(os.path.basename(p), os.path.getmtime(p)) for p in glob.glob(pat)]
+    files.sort(key=lambda t: -t[1])
+    return [n for n, _ in files]
+
+
+def _qwen_gguf_path(variant, quant):
+    stem = f"qwen-image-2.1-UC-{quant}" if variant == "uc" else f"qwen-image-2.1-{quant}"
+    return os.path.join(ROOT, "models", "diffusion_models", stem + ".gguf")
 
 
 def _scan_gallery():
@@ -96,7 +136,11 @@ def _resolve_src(token):
 def _public_state():
     with _lock:
         jobs = [{k: v for k, v in j.items() if k != "cancel"} for j in _jobs]
-    return {"backend": _backend, "jobs": jobs, "gallery": _scan_gallery()}
+        backend = dict(_backend)
+    return {"backend": backend, "jobs": jobs, "gallery": _scan_gallery(),
+            "mlx": {"installed": qwen_mlx.mlx_available(),
+                    "models": qwen_mlx.installed_variants()},
+            "ggufs": _gguf_files()}
 
 
 # ------------------------------------------------------------------ generation metadata
@@ -129,48 +173,87 @@ def _try_capabilities():
     the caller keeps polling until the start timeout.
     """
     try:
-        moss_client.server_identity()
-        return True
+        caps = moss_client.server_identity()
     except moss_client.BackendUnavailable:
         return False
     except MossError as e:
         with _lock:
             _backend.update(state="error", detail=str(e))
         return False
+    if not caps:  # nothing is listening on the backend port
+        return False
+    name = (caps.get("model") or {}).get("name") or ""
+    with _lock:
+        _backend["model"] = name
+        global _backend_mode
+        _backend_mode = "qwen" if "qwen" in name.lower() else "moss"
+    return True
 
 
-def _ensure_backend():
-    """Make sure the MOSS backend is reachable, starting start_server.sh if it is not."""
+def _ensure_backend(mode="moss", params=None):
+    """Make sure the sd-server is reachable AND running the model this job needs.
+
+    If the server is up with the other model (MOSS vs Qwen-Image-2.1 GGUF), it is stopped
+    and restarted with the right one - the reload takes a minute or two, the job just waits.
+    """
+    global _backend_mode, _backend_proc
     if _backend["state"] == "up" and _try_capabilities():
-        return True
+        if _backend_mode == mode:
+            return True
+        with _lock:
+            _backend.update(state="down", detail="switching model")
+        _dbg(f"server runs {_backend_mode}, job needs {mode} - restarting")
+        _stop_backend()
     if _backend["state"] == "error":
         return False
-    global _backend_proc
+    env = dict(os.environ)
+    if mode == "qwen":
+        env["MOSS_SERVER_MODEL"] = "qwen2.1"
+        env["QWEN_VARIANT"] = (params or {}).get("variant") or "uc"
+        env["QWEN_QUANT"] = (params or {}).get("quant") or "Q4_K_M"
+        if not os.path.isfile(_qwen_gguf_path(env["QWEN_VARIANT"], env["QWEN_QUANT"])):
+            raise MossError(f"GGUF for {env['QWEN_VARIANT']}/{env['QWEN_QUANT']} is not downloaded - "
+                            f"run: ./setup_qwen.sh gguf-{'uc' if env['QWEN_VARIANT']=='uc' else 'base'}-"
+                            f"{env['QWEN_QUANT'].lower()} gguf-enc gguf-vae gguf-tok")
     with _lock:
         _backend.update(state="starting", detail="launching start_server.sh")
-    if _backend_proc is None or _backend_proc.poll() is not None:
-        log = open(os.path.join(ROOT, "logs", "ui_backend.log"), "ab")
-        _backend_proc = subprocess.Popen(
-            [os.path.join(ROOT, "start_server.sh")], cwd=ROOT,
-            stdout=log, stderr=subprocess.STDOUT)
-        _dbg("spawned start_server.sh")
-    deadline = time.time() + BACKEND_START_TIMEOUT
-    while time.time() < deadline:
-        if _try_capabilities():
+    for _spawn in range(3):  # retries handle an old server with the other model still up
+        if _backend_proc is None or _backend_proc.poll() is not None:
+            log = open(os.path.join(ROOT, "logs", "ui_backend.log"), "ab")
+            _backend_proc = subprocess.Popen(
+                [os.path.join(ROOT, "start_server.sh")], cwd=ROOT, env=env,
+                stdout=log, stderr=subprocess.STDOUT)
+            _dbg(f"spawned start_server.sh ({mode})")
+        deadline = time.time() + BACKEND_START_TIMEOUT
+        while time.time() < deadline:
+            if _try_capabilities():
+                if _backend_mode == mode:
+                    with _lock:
+                        _backend.update(state="up", detail="")
+                    _dbg(f"capabilities ok -> backend up ({mode})")
+                    return True
+                # a still-running server with the OTHER model answered; stop it and respawn
+                _dbg(f"old {_backend_mode} server still up - stopping it")
+                with _lock:
+                    _backend.update(state="down", detail="")
+                _stop_backend()
+                break
+            if _backend["state"] == "error":
+                return False
+            if _backend_proc.poll() is not None:
+                # start_server.sh exited - either a crash or "already running" (old server)
+                if _try_capabilities() and _backend_mode != mode:
+                    with _lock:
+                        _backend.update(state="down", detail="")
+                    _stop_backend()
+                    break
+                with _lock:
+                    _backend.update(state="error",
+                                    detail="start_server.sh exited (see logs/ui_backend.log)")
+                return False
             with _lock:
-                _backend.update(state="up", detail="")
-            _dbg("capabilities ok -> backend up")
-            return True
-        if _backend["state"] == "error":
-            return False
-        if _backend_proc.poll() is not None:
-            with _lock:
-                _backend.update(state="error",
-                                detail="start_server.sh exited (see logs/ui_backend.log)")
-            return False
-        with _lock:
-            _backend["detail"] = "loading models"
-        time.sleep(1)
+                _backend["detail"] = f"loading {'Qwen-Image-2.1' if mode == 'qwen' else 'MOSS'} model"
+            time.sleep(1)
     with _lock:
         _backend.update(state="error", detail=f"backend did not come up in {BACKEND_START_TIMEOUT}s")
     return False
@@ -238,15 +321,26 @@ def _run_job(job):
         _cancel_events[job["id"]] = ev
         job.update(state="running", started=time.time(), step=0, total=None,
                    message="waiting for backend")
-    if not _ensure_backend():
+    p = job["params"]
+    if p.get("runtime") == "mlx":
+        _run_job_mlx(job, ev)
+        return
+    mode = "qwen" if p.get("runtime") == "qwen-gguf" else "moss"
+    try:
+        if not _ensure_backend(mode, p):
+            with _lock:
+                job.update(state="failed", finished=time.time(),
+                           error=_backend.get("detail") or "backend unavailable")
+            _cancel_events.pop(job["id"], None)
+            return
+    except MossError as e:
         with _lock:
-            job.update(state="failed", finished=time.time(),
-                       error=_backend.get("detail") or "backend unavailable")
+            job.update(state="failed", finished=time.time(), error=str(e), message="failed")
         _cancel_events.pop(job["id"], None)
         return
 
-    p = job["params"]
-    out = os.path.join(OUTPUTS, f"moss_{time.strftime('%Y%m%d_%H%M%S')}_{job['id']}.png")
+    prefix = "qwen" if p.get("runtime") == "qwen-gguf" else "moss"
+    out = os.path.join(OUTPUTS, f"{prefix}_{time.strftime('%Y%m%d_%H%M%S')}_{job['id']}.png")
     seed = p["seed"]
     if seed == -1:  # roll the random seed here so the metadata can record the real one
         seed = random.randrange(2**31)
@@ -260,6 +354,24 @@ def _run_job(job):
         mask_path = _upload_path(p["mask"]) if p.get("mask") else None
         if p.get("init") and not init_path:
             raise MossError("uploaded image is gone - pick the file again")
+        ref_paths = []
+        for name in p.get("refs") or []:
+            rp = _upload_path(name)
+            if not rp:
+                raise MossError("uploaded reference image is gone - pick the files again")
+            ref_paths.append(rp)
+        width, height = p["width"], p["height"]
+        if p.get("keep_aspect"):
+            width, height = _ref_aspect_size(width, height, ref_paths)
+        if p.get("runtime") == "qwen-gguf":
+            model_name = _backend.get("model") or ""
+            if "qwen" not in model_name.lower():
+                raise MossError("the sd-server switched models unexpectedly - submit the job again")
+            return moss_client.generate(
+                p["prompt"], width=width, height=height, seed=seed,
+                out=out, steps=p["steps"], strength=1.0, ref_images=ref_paths,
+                txt_cfg=p.get("txt_cfg"), img_cfg=p.get("img_cfg"),
+                on_progress=on_progress, cancel_event=ev, preview=True)
         return moss_client.generate(
             p["prompt"], width=p["width"], height=p["height"], seed=seed,
             out=out, steps=p["steps"], strength=p["strength"],
@@ -276,14 +388,78 @@ def _run_job(job):
             with _lock:
                 _backend.update(state="down", detail="")
             time.sleep(2)
-            if not _ensure_backend():
+            if not _ensure_backend(mode, p):
                 raise
             _dbg("generate attempt 2")
             path, secs = run_generate()
         _write_meta(out, {"mode": job["mode"], "prompt": p["prompt"],
                           "width": p["width"], "height": p["height"], "seed": seed,
                           "steps": p["steps"], "strength": p["strength"],
-                          "upscale": p["upscale"], "secs": round(secs, 1)})
+                          "upscale": p["upscale"], "secs": round(secs, 1),
+                          "runtime": p.get("runtime") or "sdcpp",
+                          "refs": len(p.get("refs") or [])})
+        if p["upscale"]:
+            with _lock:
+                job["message"] = "upscaling 2x"
+            moss_client.upscale(path)
+        with _lock:
+            job.update(state="done", finished=time.time(), path=os.path.basename(path),
+                       secs=round(secs, 1), message="done")
+    except MossError as e:
+        with _lock:
+            cancelled = ev.is_set()
+            job.update(state="cancelled" if cancelled else "failed",
+                       finished=time.time(), error=None if cancelled else str(e),
+                       message="cancelled" if cancelled else "failed")
+    finally:
+        _cancel_events.pop(job["id"], None)
+
+
+def _run_job_mlx(job, ev):
+    """Qwen-Image-2.1 via the local mflux MLX runtime - no sd-server involved."""
+    p = job["params"]
+    out = os.path.join(OUTPUTS, f"qwen_{time.strftime('%Y%m%d_%H%M%S')}_{job['id']}.png")
+    seed = p["seed"]
+    if seed == -1:
+        seed = random.randrange(2**31)
+
+    def on_progress(step, total, message):
+        with _lock:
+            job.update(step=step, total=total, message=message)
+
+    try:
+        ref_paths = []
+        for name in p.get("refs") or []:
+            rp = _upload_path(name)
+            if not rp:
+                raise MossError("uploaded reference image is gone - pick the files again")
+            ref_paths.append(rp)
+        width, height = p["width"], p["height"]
+        if p.get("keep_aspect"):
+            width, height = _ref_aspect_size(width, height, ref_paths)
+            if (width, height) != (p["width"], p["height"]):
+                with _lock:
+                    job["message"] = f"matching reference aspect ({width}x{height})"
+        with _lock:
+            job["message"] = "starting MLX render"
+        turbo = p.get("variant") == "turbo"
+        path, secs = qwen_mlx.generate(
+            p["prompt"], out=out, model_dir=p.get("qmodel"),
+            turbo=turbo, quant=int(p.get("quant") or 4),
+            width=width, height=height, seed=seed,
+            steps=p["steps"], guidance=p.get("guidance"),
+            ref_images=ref_paths, step_cache=bool(p.get("step_cache")),
+            small_text_encoder=bool(p.get("small_encoder")),
+            loras=p.get("loras") or (),
+            on_progress=on_progress, cancel_event=ev)
+        _write_meta(out, {"mode": job["mode"], "prompt": p["prompt"],
+                          "width": width, "height": height, "seed": seed,
+                          "steps": p["steps"], "strength": None,
+                          "upscale": p["upscale"], "secs": round(secs, 1),
+                          "runtime": "mlx", "model": p.get("qmodel"),
+                          "small_encoder": bool(p.get("small_encoder")),
+                          "loras": [os.path.basename(x) for x in (p.get("loras") or ())],
+                          "refs": len(ref_paths)})
         if p["upscale"]:
             with _lock:
                 job["message"] = "upscaling 2x"
@@ -310,17 +486,10 @@ def _enqueue(payload):
         width, height = validate_size(payload.get("width", 1024), payload.get("height", 1024))
     except MossError as e:
         return None, str(e)
-    quality = payload.get("quality", "standard")
-    if quality not in QUALITY_STEPS:
-        return None, f"quality must be one of {sorted(QUALITY_STEPS)}"
-    steps = QUALITY_STEPS[quality]
-    if quality == "high":  # turbo presets have fixed LoRA schedules; only high is tunable
-        try:
-            steps = int(payload.get("steps", steps))
-        except (TypeError, ValueError):
-            return None, "steps is not a number"
-        if not 1 <= steps <= 100:
-            return None, "steps must be 1-100"
+    runtime = payload.get("runtime", "sdcpp")
+    if runtime not in ("sdcpp", "mlx", "qwen-gguf"):
+        return None, f"runtime must be sdcpp, mlx or qwen-gguf (got {runtime!r})"
+    qwen = runtime in ("mlx", "qwen-gguf")
     try:
         seed = int(payload.get("seed", -1))
         batch = max(1, min(int(payload.get("batch", 1)), 8))
@@ -329,6 +498,100 @@ def _enqueue(payload):
         return None, "seed, batch or strength is not a number"
     if not 0.0 < strength <= 1.0:
         return None, "strength must be in (0, 1]"
+
+    # reference images (Qwen 2.1 tab): 0-8 uploads or data URLs -> saved names
+    raw_refs = payload.get("refs") or []
+    if not isinstance(raw_refs, list) or len(raw_refs) > 8:
+        return None, "refs must be a list of at most 8 images"
+    refs = []
+    try:
+        for r in raw_refs:
+            if isinstance(r, str) and r.startswith("data:"):
+                r, _, _ = _save_dataurl(r)
+            refs.append(str(r))
+    except ValueError as e:
+        return None, f"bad reference image: {e}"
+
+    qmodel = variant = quant = txt_cfg = img_cfg = guidance = None
+    step_cache = bool(payload.get("step_cache"))
+    small_encoder = bool(payload.get("small_encoder"))
+    keep_aspect = bool(payload.get("keep_aspect"))
+    if qwen:
+        # Qwen quality ladder: turbo runs its fixed 8-step schedule; the base model
+        # uses draft 20 / standard 40 / custom steps.
+        if runtime == "mlx":
+            variant = payload.get("variant", "base")
+            if variant not in ("base", "turbo"):
+                return None, "variant must be base or turbo"
+            try:
+                quant = int(payload.get("quant", 4))
+            except (TypeError, ValueError):
+                return None, "quant is not a number"
+            if quant not in (4, 6, 8):
+                return None, "quant must be 4, 6 or 8"
+            qmodel = payload.get("qmodel") or (f"mlx-turbo-q{quant}" if variant == "turbo"
+                                               else f"mlx-q{quant}")
+            if qmodel not in qwen_mlx.VARIANTS:
+                return None, f"unknown MLX model {qmodel!r} - run ./setup_qwen.sh {qmodel}"
+            if variant == "turbo":
+                steps = qwen_mlx.TURBO_STEPS
+            else:
+                steps = qwen_mlx.BASE_STEPS
+        else:  # qwen-gguf
+            variant = payload.get("variant", "uc")
+            if variant not in ("uc", "base"):
+                return None, "variant must be uc or base"
+            try:
+                quant = str(payload.get("quant", "Q4_K_M"))
+            except (TypeError, ValueError):
+                return None, "quant is not a string"
+            steps = 40
+        quality = payload.get("quality", "fast" if runtime == "mlx" else "standard")
+        lora_dmd2 = runtime == "mlx" and bool(payload.get("lora_dmd2"))
+        if runtime == "mlx":
+            if lora_dmd2:
+                # DMD2 is trained on the base model without CFG; 3 steps give a
+                # finished image (2 is the trained minimum, 3 refines it).
+                if variant == "turbo":
+                    return None, "the DMD2 LoRA works with the base model, not turbo"
+                if not os.path.isfile(qwen_mlx.DMD2_LORA):
+                    return None, "DMD2 LoRA is not downloaded - run: ./setup_qwen.sh lora-dmd2"
+                steps = 3
+            elif quality not in MLX_STEPS and quality != "high":
+                return None, f"quality must be one of {sorted(MLX_STEPS)} or high"
+            elif variant != "turbo":
+                steps = MLX_STEPS.get(quality, steps)
+        elif quality not in QUALITY_STEPS:
+            return None, f"quality must be one of {sorted(QUALITY_STEPS)}"
+        if quality == "high" and not (runtime == "mlx" and variant == "turbo"):
+            try:
+                steps = int(payload.get("steps", steps))
+            except (TypeError, ValueError):
+                return None, "steps is not a number"
+            if not 1 <= steps <= 100:
+                return None, "steps must be 1-100"
+        try:
+            guidance = payload.get("guidance", None)
+            guidance = float(guidance) if guidance not in (None, "") else None
+            txt_cfg = float(payload.get("txt_cfg", 2.5))
+            img_cfg = float(payload.get("img_cfg", 1.0))
+        except (TypeError, ValueError):
+            return None, "guidance/txt_cfg/img_cfg is not a number"
+        if lora_dmd2:
+            guidance = 1.0  # DMD2 runs without CFG (teacher guidance is baked in)
+    else:
+        quality = payload.get("quality", "standard")
+        if quality not in QUALITY_STEPS:
+            return None, f"quality must be one of {sorted(QUALITY_STEPS)}"
+        steps = QUALITY_STEPS[quality]
+        if quality == "high":  # turbo presets have fixed LoRA schedules; only high is tunable
+            try:
+                steps = int(payload.get("steps", steps))
+            except (TypeError, ValueError):
+                return None, "steps is not a number"
+            if not 1 <= steps <= 100:
+                return None, "steps must be 1-100"
+
     jobs = []
     init_name = payload.get("init")
     mask_name = payload.get("mask")
@@ -341,6 +604,8 @@ def _enqueue(payload):
         return None, f"bad mask/image: {e}"
     mode = payload.get("tag") or ("inpaint" if (init_name and mask_name)
                                   else ("restyle" if init_name else "txt2img"))
+    if qwen:
+        mode = "qwen-edit" if refs else "qwen"
     with _lock:
         for _ in range(batch):
             job = {
@@ -349,7 +614,13 @@ def _enqueue(payload):
                 "params": {"prompt": prompt, "width": width, "height": height,
                            "seed": seed, "steps": steps, "strength": strength,
                            "upscale": bool(payload.get("upscale")),
-                           "init": init_name, "mask": mask_name},
+                           "init": init_name, "mask": mask_name,
+                           "runtime": runtime, "refs": refs, "qmodel": qmodel,
+                           "variant": variant, "quant": quant,
+                           "txt_cfg": txt_cfg, "img_cfg": img_cfg, "guidance": guidance,
+                           "step_cache": step_cache, "small_encoder": small_encoder,
+                           "keep_aspect": keep_aspect,
+                           "loras": ([qwen_mlx.DMD2_LORA] if lora_dmd2 else [])},
                 "step": 0, "total": None, "message": "queued",
                 "enqueued": time.time(), "started": None, "finished": None,
             }

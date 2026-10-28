@@ -44,13 +44,13 @@ main { display: grid; grid-template-columns: 360px 1fr; min-height: calc(100vh -
 
 /* ---------- left column ---------- */
 #side { border-right: 1px solid var(--line); padding: 20px; display: flex; flex-direction: column; gap: 16px; }
-textarea#prompt, textarea#eprompt {
+textarea#prompt, textarea#eprompt, textarea#qprompt {
   width: 100%; min-height: 130px; resize: vertical;
   background: var(--panel2); color: var(--text);
   border: 1px solid var(--line); border-radius: 12px; padding: 12px;
   font: inherit; line-height: 1.45;
 }
-textarea#prompt:focus, textarea#eprompt:focus { outline: none; border-color: var(--accent); }
+textarea#prompt:focus, textarea#eprompt:focus, textarea#qprompt:focus { outline: none; border-color: var(--accent); }
 label { display: block; font-size: 12px; color: var(--dim); margin: 0 0 6px 2px; text-transform: uppercase; letter-spacing: .6px; }
 .row { display: flex; gap: 8px; flex-wrap: wrap; }
 .chip {
@@ -66,12 +66,12 @@ input[type=number], select {
   border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; font: inherit;
 }
 input[type=number]:focus, select:focus { outline: none; border-color: var(--accent); }
-#go, #ego {
+#go, #ego, #qgo {
   width: 100%; padding: 13px; border: none; border-radius: 12px; cursor: pointer;
   font: inherit; font-weight: 650; font-size: 15px; color: #fff;
   background: linear-gradient(135deg, var(--accent), var(--accent2));
 }
-#go:disabled, #ego:disabled { opacity: .45; cursor: default; }
+#go:disabled, #ego:disabled, #qgo:disabled { opacity: .45; cursor: default; }
 
 .tabs { display: flex; gap: 8px; }
 button.tab {
@@ -79,7 +79,16 @@ button.tab {
   background: var(--panel2); color: var(--dim); border: 1px solid var(--line); border-radius: 10px;
 }
 button.tab.on { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--panel2)); }
-#panel-gen, #panel-edit, #panel-layout { display: flex; flex-direction: column; gap: 14px; }
+#panel-gen, #panel-edit, #panel-layout, #panel-qwen { display: flex; flex-direction: column; gap: 14px; }
+#qimgs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 8px; }
+#qimgs:empty { display: none; }
+#qimgs .qthumb { position: relative; border-radius: 8px; overflow: hidden; border: 1px solid var(--line); aspect-ratio: 1; }
+#qimgs .qthumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+#qimgs .qthumb button {
+  position: absolute; top: 2px; right: 2px; border: none; border-radius: 6px;
+  background: rgba(0,0,0,.65); color: #fff; cursor: pointer; font-size: 11px; padding: 1px 6px;
+}
+#qimgs .qthumb button:hover { background: var(--bad); }
 #lcanvas-wrap { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background:
   repeating-conic-gradient(#1a212c 0% 25%, #151b25 0% 50%) 50% / 24px 24px; }
 #lcanvas { display: block; width: 100%; touch-action: none; cursor: crosshair; }
@@ -187,6 +196,7 @@ button.link { border: none; background: none; color: var(--accent); cursor: poin
       <button id="tab-gen" class="tab on">✨ Generate</button>
       <button id="tab-edit" class="tab">🖌 Edit image</button>
       <button id="tab-layout" class="tab">📐 Layout</button>
+      <button id="tab-qwen" class="tab">🧩 Qwen 2.1</button>
     </div>
 
     <div id="panel-gen">
@@ -328,6 +338,72 @@ button.link { border: none; background: none; color: var(--accent); cursor: poin
       <button id="lgo">Generate layout</button>
     </div>
 
+    <div id="panel-qwen" style="display:none">
+      <div>
+        <label>Reference images (0 = pure generator, 1–8 = edit/combine into one)</label>
+        <input type="file" id="qfile" accept="image/png,image/jpeg,image/webp" multiple hidden>
+        <div class="row">
+          <button id="qpick" class="chip">📷 Add images…</button>
+          <button id="qclear" class="chip">✕ Clear all</button>
+        </div>
+        <div id="qimgs"></div>
+      </div>
+      <div>
+        <label for="qprompt">Prompt — what to make, or the edit to apply to the images above</label>
+        <textarea id="qprompt" placeholder="Empty images: describe the image to generate. With images: e.g. «Place the person from image 1 in the setting of image 2, sunset light»."></textarea>
+      </div>
+      <div class="grid2">
+        <div><label for="qruntime">Runtime</label>
+          <select id="qruntime">
+            <option value="mlx" selected>MLX — mflux (recommended)</option>
+            <option value="qwen-gguf">GGUF — sd-server</option>
+          </select>
+        </div>
+        <div><label for="qmodel">Model</label><select id="qmodel"></select></div>
+      </div>
+      <div class="meta" id="qhint"></div>
+      <div>
+        <label>Aspect ratio</label>
+        <div class="row" id="qratios"></div>
+      </div>
+      <div class="grid2">
+        <div><label for="qw">Width</label><input id="qw" type="number" value="1024" step="16" min="256" max="1536"></div>
+        <div><label for="qh">Height</label><input id="qh" type="number" value="1024" step="16" min="256" max="1536"></div>
+      </div>
+      <div>
+        <label class="inline" title="Match the output to the first reference photo's aspect ratio, keeping the same pixel area (WxH inputs become the size budget). Needs at least one reference image; without one it has no effect."><input type="checkbox" id="qaspect"> Match reference aspect ratio</label>
+      </div>
+      <div class="grid2">
+        <div><label for="qq">Quality</label>
+          <select id="qq">
+            <option value="fast" selected>Fast — 10 steps</option>
+            <option value="draft">Draft — 20 steps</option>
+            <option value="standard">Standard — 40 steps</option>
+            <option value="high">High — steps below</option>
+          </select>
+        </div>
+        <div><label for="qseed">Seed (-1 random)</label><input id="qseed" type="number" value="-1"></div>
+      </div>
+      <div class="grid2" id="qstepsrow" style="display:none">
+        <div><label for="qsteps">Steps (1-100)</label><input id="qsteps" type="number" value="40" min="1" max="100"></div>
+        <div><label for="qguidance">Guidance</label><input id="qguidance" type="number" value="2.5" step="0.25" min="1" max="10"></div>
+      </div>
+      <div class="grid2">
+        <div><label for="qbatch">Batch</label>
+          <select id="qbatch"><option>1</option><option>2</option><option>3</option><option>4</option></select>
+        </div>
+        <div><label for="qups">Post</label>
+          <select id="qups"><option value="">none</option><option value="1">upscale 2x</option></select>
+        </div>
+      </div>
+      <div class="row" id="qextras" style="display:none">
+        <label class="inline"><input type="checkbox" id="qcache"> Step cache — faster, slightly different result (MLX only)</label>
+        <label class="inline" title="DMD2 distillation LoRA: renders a finished image in 3 steps without CFG (~10x faster than standard). Trained for the base model - forces 3 steps and turns CFG off while on. Toggle off to go back to full quality."><input type="checkbox" id="qlora"> DMD2 — 3-step turbo (LoRA)</label>
+        <label class="inline" title="Experimental: swaps the 8B prompt encoder for a 0.8B one — much faster prompt encoding and ~15 GB less RAM. English prompts only; numerals in rendered text can come out wrong."><input type="checkbox" id="qsmall"> Fast prompt encoder — experimental (MLX)</label>
+      </div>
+      <button id="qgo">Generate with Qwen 2.1</button>
+    </div>
+
     <div>
       <label>Queue</label>
       <div id="queue"><div id="empty">Queue is empty.</div></div>
@@ -388,26 +464,31 @@ for (const [k, id] of [["prompt","prompt"],["w","w"],["h","h"],["q","q"],["seed"
   if (localStorage.getItem("moss_" + k) !== null) $("#" + id).value = localStorage.getItem("moss_" + k);
 
 // ratio chips
-let curRatio = null;
-const ratioBox = $("#ratios");
-for (const [label, w, h] of RATIOS) {
-  const b = document.createElement("button");
-  b.className = "chip"; b.textContent = label;
-  if (+$("#w").value === w && +$("#h").value === h) { b.classList.add("on"); curRatio = b; }
-  b.onclick = () => {
-    $("#w").value = w; $("#h").value = h;
-    if (curRatio) curRatio.classList.remove("on");
-    b.classList.add("on"); curRatio = b; save();
-  };
-  ratioBox.append(b);
+function mkRatios(boxId, wSel, hSel) {
+  let cur = null;
+  const box = $(boxId);
+  for (const [label, w, h] of RATIOS) {
+    const b = document.createElement("button");
+    b.className = "chip"; b.textContent = label;
+    if (+$(wSel).value === w && +$(hSel).value === h) { b.classList.add("on"); cur = b; }
+    b.onclick = () => {
+      $(wSel).value = w; $(hSel).value = h;
+      if (cur) cur.classList.remove("on");
+      b.classList.add("on"); cur = b; save();
+    };
+    box.append(b);
+  }
 }
-const save = () => { for (const [k, id] of [["prompt","prompt"],["w","w"],["h","h"],["q","q"],["seed","seed"],["batch","batch"],["ups","ups"],["steps","steps"],["eprompt","eprompt"],["estrength","estrength"],["eseed","eseed"],["eq","eq"],["eups","eups"],["esteps","esteps"],["lscene","lscene"],["lw","lw"],["lh","lh"],["lq","lq"],["lseed","lseed"],["lups","lups"],["lsteps","lsteps"]]) localStorage.setItem("moss_" + k, $("#" + id).value); };
-for (const id of ["prompt","w","h","q","seed","batch","ups","steps","eprompt","estrength","eseed","eq","eups","esteps","lscene","lw","lh","lq","lseed","lups","lsteps"]) {
+mkRatios("#ratios", "#w", "#h");
+mkRatios("#qratios", "#qw", "#qh");
+const QWEN_SAVE_IDS = ["qprompt","qw","qh","qq","qseed","qbatch","qups","qsteps","qruntime","qmodel","qguidance"];
+const save = () => { for (const [k, id] of [["prompt","prompt"],["w","w"],["h","h"],["q","q"],["seed","seed"],["batch","batch"],["ups","ups"],["steps","steps"],["eprompt","eprompt"],["estrength","estrength"],["eseed","eseed"],["eq","eq"],["eups","eups"],["esteps","esteps"],["lscene","lscene"],["lw","lw"],["lh","lh"],["lq","lq"],["lseed","lseed"],["lups","lups"],["lsteps","lsteps"],...QWEN_SAVE_IDS.map(id => [id, id])]) localStorage.setItem("moss_" + k, $("#" + id).value); };
+for (const id of ["prompt","w","h","q","seed","batch","ups","steps","eprompt","estrength","eseed","eq","eups","esteps","lscene","lw","lh","lq","lseed","lups","lsteps",...QWEN_SAVE_IDS]) {
   $("#" + id).addEventListener("input", save);
   $("#" + id).addEventListener("change", save);
 }
-// restore edit/layout values and refresh dependent labels
-["eprompt","estrength","eseed","eq","eups","esteps","lscene","lw","lh","lq","lseed","lups","lsteps"].forEach(id => {
+// restore edit/layout/qwen values and refresh dependent labels
+[...["eprompt","estrength","eseed","eq","eups","esteps","lscene","lw","lh","lq","lseed","lups","lsteps",...QWEN_SAVE_IDS]].forEach(id => {
   const v = localStorage.getItem("moss_" + id);
   if (v !== null) $("#" + id).value = v;
 });
@@ -441,13 +522,16 @@ const maskCv = $("#emask"), maskCtx = maskCv.getContext("2d");
 $("#tab-gen").onclick = () => setTab("gen");
 $("#tab-edit").onclick = () => setTab("edit");
 $("#tab-layout").onclick = () => setTab("layout");
+$("#tab-qwen").onclick = () => setTab("qwen");
 function setTab(which) {
   $("#tab-gen").classList.toggle("on", which === "gen");
   $("#tab-edit").classList.toggle("on", which === "edit");
   $("#tab-layout").classList.toggle("on", which === "layout");
+  $("#tab-qwen").classList.toggle("on", which === "qwen");
   $("#panel-gen").style.display = which === "gen" ? "flex" : "none";
   $("#panel-edit").style.display = which === "edit" ? "flex" : "none";
   $("#panel-layout").style.display = which === "layout" ? "flex" : "none";
+  $("#panel-qwen").style.display = which === "qwen" ? "flex" : "none";
 }
 
 $("#epick").onclick = () => $("#efile").click();
@@ -722,6 +806,147 @@ lay.boxes = [
 lay.w = Math.max(256, +$("#lw").value || 1024); lay.h = Math.max(256, +$("#lh").value || 1024);
 lResizeCanvas();
 
+// ------------------------------------------------------------------ qwen 2.1 tab
+const qwen = { refs: [] };  // [{name, url}] uploaded reference images, 0-8
+let qMlx = { installed: false, models: {} };   // from /api/state
+let qGgufs = [];                               // downloaded qwen-image-2.1*.gguf names
+let qBackendModel = "";                        // sdcpp model currently loaded
+
+$("#qpick").onclick = () => $("#qfile").click();
+$("#qfile").onchange = () => { addQFiles([...$("#qfile").files]); $("#qfile").value = ""; };
+$("#panel-qwen").addEventListener("dragover", e => e.preventDefault());
+$("#panel-qwen").addEventListener("drop", e => { e.preventDefault(); addQFiles([...e.dataTransfer.files]); });
+
+async function addQFiles(files) {
+  for (const f of files) {
+    if (qwen.refs.length >= 8) { alert("At most 8 reference images."); break; }
+    const data = await new Promise(res => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(f); });
+    const r = await fetch("/api/upload", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({data})});
+    const j = await r.json();
+    if (j.error) { alert(j.error); continue; }
+    qwen.refs.push({name: j.name, url: data});
+  }
+  renderQImgs();
+}
+function renderQImgs() {
+  const box = $("#qimgs");
+  box.replaceChildren();
+  qwen.refs.forEach((r, i) => {
+    const d = document.createElement("div"); d.className = "qthumb";
+    const img = document.createElement("img"); img.src = r.url;
+    const x = document.createElement("button"); x.textContent = "✕"; x.title = "remove";
+    x.onclick = () => { qwen.refs.splice(i, 1); renderQImgs(); };
+    d.append(img, x); box.append(d);
+  });
+}
+$("#qclear").onclick = () => { qwen.refs = []; renderQImgs(); };
+
+const Q_GGUF_MODELS = [];
+for (const v of ["uc", "base"]) for (const q of ["Q4_0", "Q4_K_M", "Q5_K_M", "Q6_K", "Q8_0"])
+  Q_GGUF_MODELS.push([(v === "uc" ? "UC " : "Base ") + q + " (GGUF)", v + "|" + q]);
+
+function qSelSignature() {
+  return $("#qruntime").value + "|" + Object.keys(qMlx.models).join(",");
+}
+let qLastSig = null;
+function qRebuildModels() {
+  const sig = qSelSignature();
+  if (sig === qLastSig) return;
+  qLastSig = sig;
+  const sel = $("#qmodel");
+  const prev = sel.value;
+  sel.replaceChildren();
+  if ($("#qruntime").value === "mlx") {
+    const names = Object.keys(qMlx.models);
+    if (!names.length) {
+      const o = document.createElement("option");
+      o.value = ""; o.textContent = qMlx.installed ? "no MLX models downloaded" : "mflux not installed";
+      sel.append(o); sel.disabled = true;
+    } else {
+      sel.disabled = false;
+      for (const n of names) {
+        const o = document.createElement("option");
+        o.value = n; o.textContent = "Qwen 2.1 " + qMlx.models[n] + " (MLX)";
+        sel.append(o);
+      }
+      if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
+    }
+  } else {
+    sel.disabled = false;
+    for (const [label, val] of Q_GGUF_MODELS) {
+      const o = document.createElement("option"); o.value = val; o.textContent = label;
+      sel.append(o);
+    }
+    if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
+  }
+  qSync();
+}
+function qTurbo() { return $("#qruntime").value === "mlx" && /turbo/.test($("#qmodel").value); }
+function qSync() {
+  const turbo = qTurbo();
+  const high = $("#qq").value === "high" && !turbo;
+  $("#qq").disabled = turbo;
+  $("#qstepsrow").style.display = high ? "" : "none";
+  $("#qextras").style.display = $("#qruntime").value === "mlx" ? "" : "none";
+  const hint = $("#qhint");
+  if ($("#qruntime").value === "mlx") {
+    hint.textContent = Object.keys(qMlx.models).length
+      ? "MLX runs locally in this app - no backend restart needed."
+      : "No MLX model yet - run:  ./setup_qwen.sh mlx-q4   (small base 4-bit, ~4.4 GB)";
+  } else {
+    const [v, q] = $("#qmodel").value.split("|");
+    const gguf = qGgufs.find(n => n === (v === "uc" ? `qwen-image-2.1-UC-${q}` : `qwen-image-2.1-${q}`) + ".gguf");
+    hint.textContent = gguf
+      ? `${gguf} is downloaded - the app switches the server to it automatically on the first job (~1-2 min model reload; switching back to MOSS reloads that too).`
+      : "This GGUF is not downloaded yet - run:  ./setup_qwen.sh gguf-" + (v === "uc" ? "uc-" : "base-") + q.toLowerCase() + " gguf-enc gguf-vae gguf-tok"
+        + (qBackendModel ? "  (currently loaded: " + qBackendModel + ")" : "");
+  }
+}
+$("#qruntime").addEventListener("change", qRebuildModels);
+$("#qmodel").addEventListener("change", qSync);
+$("#qq").addEventListener("change", qSync);
+if (localStorage.getItem("moss_qcache") === "1") $("#qcache").checked = true;
+$("#qcache").addEventListener("change", () => localStorage.setItem("moss_qcache", $("#qcache").checked ? "1" : "0"));
+if (localStorage.getItem("moss_qsmall") === "1") $("#qsmall").checked = true;
+$("#qsmall").addEventListener("change", () => localStorage.setItem("moss_qsmall", $("#qsmall").checked ? "1" : "0"));
+if (localStorage.getItem("moss_qlora") === "1") $("#qlora").checked = true;
+$("#qlora").addEventListener("change", () => localStorage.setItem("moss_qlora", $("#qlora").checked ? "1" : "0"));
+if (localStorage.getItem("moss_qaspect") === "1") $("#qaspect").checked = true;
+$("#qaspect").addEventListener("change", () => localStorage.setItem("moss_qaspect", $("#qaspect").checked ? "1" : "0"));
+
+$("#qgo").onclick = async () => {
+  const runtime = $("#qruntime").value;
+  if (runtime === "mlx" && !$("#qmodel").value) {
+    alert("No MLX model downloaded yet - run:  ./setup_qwen.sh mlx-q4");
+    return;
+  }
+  const body = {
+    prompt: $("#qprompt").value, width: +$("#qw").value, height: +$("#qh").value,
+    runtime, quality: $("#qq").value, seed: +$("#qseed").value,
+    batch: +$("#qbatch").value, upscale: $("#qups").value === "1",
+    refs: qwen.refs.map(r => r.name),
+  };
+  if (runtime === "mlx") {
+    body.qmodel = $("#qmodel").value;
+    if (!qTurbo()) body.guidance = +$("#qguidance").value || null;
+    body.step_cache = $("#qcache").checked;
+    body.small_encoder = $("#qsmall").checked;
+    body.lora_dmd2 = $("#qlora").checked;
+    body.keep_aspect = $("#qaspect").checked;
+  } else {
+    const [variant, quant] = $("#qmodel").value.split("|");
+    body.variant = variant; body.quant = quant;
+  }
+  if (body.quality === "high" && !qTurbo()) body.steps = +$("#qsteps").value || 40;
+  const r = await fetch("/api/generate", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  const j = await r.json();
+  if (j.error) alert(j.error);
+  refresh();
+};
+$("#qprompt").addEventListener("keydown", e => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") $("#qgo").click(); });
+qRebuildModels();
+qSync();
+
 const ST_LABEL = {queued: "queued", running: "rendering", done: "done", failed: "failed", cancelled: "cancelled"};
 function renderQueue(jobs) {
   queueEl.replaceChildren();
@@ -874,6 +1099,13 @@ async function refresh() {
     else if (s.backend.state === "error") { b.textContent = "○ backend error"; b.className = "err"; }
     else { b.textContent = "○ backend offline"; b.className = ""; }
     $("#backend-detail").textContent = s.backend.detail || "";
+    if (s.mlx) {
+      const sig = JSON.stringify(s.mlx);
+      if (JSON.stringify(qMlx) !== sig) { qMlx = s.mlx; qLastSig = null; qRebuildModels(); }
+    }
+    if (s.ggufs && JSON.stringify(s.ggufs) !== JSON.stringify(qGgufs)) { qGgufs = s.ggufs; qSync(); }
+    const bm = s.backend.model || "";
+    if (bm !== qBackendModel) { qBackendModel = bm; qSync(); }
     renderQueue(s.jobs);
     const newNames = s.gallery.map(g => g.name).join();
     if (newNames !== gallery.map(g => g.name).join()) { gallery = s.gallery; renderGallery(); }

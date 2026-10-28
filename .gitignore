@@ -16,3 +16,6 @@ research_notes/
 reports/
 
 .DS_Store
+
+# ZCode agent config
+.zcode/

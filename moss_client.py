@@ -100,9 +100,10 @@ def _get(path):
 
 
 def server_identity():
-    """Return the backend's capabilities if SERVER is a MOSS sd-server, None if nothing listens.
+    """Return the backend's capabilities if SERVER is one of our sd-servers, None if nothing listens.
 
-    Raises MossError if something else (e.g. another web UI) is listening on that port.
+    Accepts any sd-server diffusion model (MOSS or Qwen-Image-2.1 GGUF). Raises MossError if
+    something else (e.g. another web UI) is listening on that port.
     """
     try:
         caps = _request("/sdcpp/v1/capabilities", timeout=3)
@@ -111,7 +112,8 @@ def server_identity():
     except MossError:
         caps = None
     name = ((caps or {}).get("model") or {}).get("name", "")
-    if name != MODEL_NAME:
+    ok = name == MODEL_NAME or name.lower().endswith(".gguf")
+    if not ok:
         raise MossError(f"port {SERVER} is used by another service (model={name or 'unknown'}). "
                         "Set MOSS_PORT to a free port.")
     return caps
@@ -238,10 +240,13 @@ def _run(body, out, timeout=600, on_progress=None, cancel_event=None, preview=Fa
 
 
 def generate(prompt, width=768, height=768, seed=-1, out="out.png", steps=4,
-             init_image=None, mask_image=None, strength=0.75, on_progress=None,
+             init_image=None, mask_image=None, strength=0.75, ref_images=None,
+             txt_cfg=None, img_cfg=None, on_progress=None,
              cancel_event=None, preview=False):
     """Text-to-image, img2img (init_image) or inpainting (init_image + mask_image).
 
+    ref_images: list of local paths used as reference images for edit models
+    (Qwen-Image-2.1 etc.); up to 8. txt_cfg/img_cfg override the guidance scales.
     steps: 3 (draft) or 4 (standard) use the turbo LoRAs; any other value (e.g. 50 = "high")
     runs the full model with the official CFG 3 settings. Mask: white = repaint, black = keep.
     Sizes are snapped to multiples of 16 and validated. on_progress(step, total, message) is
@@ -252,6 +257,10 @@ def generate(prompt, width=768, height=768, seed=-1, out="out.png", steps=4,
     width, height = validate_size(width, height)
     if not 0.0 < float(strength) <= 1.0:
         raise MossError("strength must be in (0, 1]")
+    refs = [os.path.abspath(p) for p in (ref_images or [])][:8]
+    for p in refs:
+        if not os.path.isfile(p):
+            raise MossError(f"reference image not found: {p}")
     if steps in TURBO:
         lora, sigmas = TURBO[steps]
         sample = {"sample_method": "euler", "sample_steps": len(sigmas) - 1,
@@ -265,6 +274,10 @@ def generate(prompt, width=768, height=768, seed=-1, out="out.png", steps=4,
                   "guidance": {"txt_cfg": HIGH_CFG}}
         loras = []
         timeout = max(600, int(steps) * 2 * 60)
+    if txt_cfg is not None:
+        sample["guidance"]["txt_cfg"] = float(txt_cfg)
+    if img_cfg is not None:
+        sample["guidance"]["img_cfg"] = float(img_cfg)
     body = {
         "prompt": prompt,
         "negative_prompt": "",
@@ -281,6 +294,8 @@ def generate(prompt, width=768, height=768, seed=-1, out="out.png", steps=4,
         body["init_image"] = _b64(init_image)
     if mask_image:
         body["mask_image"] = _b64(mask_image)
+    if refs:
+        body["ref_images"] = [_b64(p) for p in refs]
     return _run(body, out, timeout=timeout, on_progress=on_progress,
                 cancel_event=cancel_event, preview=preview)
 
