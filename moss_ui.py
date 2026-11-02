@@ -11,6 +11,7 @@ queue but the finished images stay in outputs/.
 """
 import base64
 import glob
+import hashlib
 import json
 import os
 import random
@@ -67,7 +68,9 @@ MAX_UPLOAD_SIDE = 1024
 GALLERY_DIRS = [OUTPUTS]
 GALLERY_DIRS += [os.path.abspath(p) for p in
                  os.environ.get("MOSS_EXTRA_GALLERY_DIRS", "").split(":") if p]
-IMG_EXTS = (".png", ".jpg", ".jpeg", ".webp")
+IMG_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".heic", ".heif")
+HEIC_EXTS = (".heic", ".heif")  # browsers can't render these; converted on the fly
+MEDIA_CACHE = os.path.join(OUTPUTS, ".media-cache")  # HEIC -> PNG conversions for /media
 
 UI_HTML_PATH = os.path.join(ROOT, "ui", "index.html")
 
@@ -119,6 +122,40 @@ def _scan_gallery():
             })
     out.sort(key=lambda d: d["mtime"], reverse=True)
     return out
+
+
+def _media_path(fp):
+    """Serve path for a gallery file: HEIC/HEIF is converted to PNG once (macOS sips)
+    and cached, everything else is returned unchanged. The EXIF rotation is baked
+    into the PNG (browsers ignore PNG orientation tags) and the tag is stripped, so
+    previews and imports see the same, correctly rotated pixels."""
+    if os.path.splitext(fp)[1].lower() not in HEIC_EXTS:
+        return fp
+    os.makedirs(MEDIA_CACHE, exist_ok=True)
+    out = os.path.join(MEDIA_CACHE, hashlib.sha1(fp.encode()).hexdigest() + ".png")
+    if not os.path.isfile(out):
+        try:
+            r = subprocess.run(["sips", "-s", "format", "png", fp, "--out", out],
+                               capture_output=True, timeout=60)
+            if r.returncode != 0 or not os.path.isfile(out):
+                return fp  # fall back to the raw file; the browser shows a broken image
+            from PIL import Image, ImageOps
+            with Image.open(out) as im:
+                fixed = ImageOps.exif_transpose(im)  # also removes the orientation tag
+                fixed.save(out, format="PNG")
+        except Exception:
+            return fp
+    return out
+
+
+def _import_image_file(path):
+    """Open any gallery file (HEIC included), fit it to model limits, save as PNG
+    under UPLOADS. Returns (name, width, height); raises on unreadable input."""
+    from PIL import Image
+
+    img = Image.open(_media_path(path))
+    img.load()
+    return _save_pil(img)
 
 
 def _resolve_src(token):
@@ -260,23 +297,17 @@ def _ensure_backend(mode="moss", params=None):
 
 
 # ------------------------------------------------------------------ uploads (edit tab)
-def _save_dataurl(dataurl):
-    """Decode a data:image/...;base64 URL, fit it to model limits, save under UPLOADS.
-
-    Returns (name, width, height). Raises ValueError on bad input.
-    """
-    import base64 as b64
+def _save_pil(img):
+    """Fit a loaded PIL image to model limits and save it under UPLOADS as PNG.
+    Returns (name, width, height)."""
     import io
-    import re
     import uuid
 
-    from PIL import Image
+    from PIL import Image, ImageOps
 
-    m = re.match(r"data:image/(png|jpeg|jpg|webp);base64,(.+)", dataurl or "", re.S)
-    if not m:
-        raise ValueError("expected a data:image/...;base64 URL")
-    img = Image.open(io.BytesIO(b64.b64decode(m.group(2))))
-    img.load()
+    # camera files store pixels in sensor orientation plus an EXIF rotation tag;
+    # without this step portrait shots come in lying on their side
+    img = ImageOps.exif_transpose(img)
     if img.mode not in ("RGB", "RGBA", "L"):
         img = img.convert("RGB")
     w, h = img.size
@@ -287,6 +318,47 @@ def _save_dataurl(dataurl):
     name = f"up_{int(time.time())}_{uuid.uuid4().hex[:8]}.png"
     img.save(os.path.join(UPLOADS, name), format="PNG")
     return name, img.width, img.height
+
+
+_EXT_BY_MIME = {"png": ".png", "jpeg": ".jpg", "jpg": ".jpg", "webp": ".webp",
+                "heic": ".heic", "heif": ".heif", "tiff": ".tiff", "gif": ".gif",
+                "bmp": ".bmp", "octet-stream": ""}
+
+
+def _save_dataurl(dataurl):
+    """Decode a data:image/...;base64 URL and save it under UPLOADS.
+
+    Formats PIL cannot read (HEIC) go through sips first. Returns (name, width,
+    height). Raises ValueError on bad input.
+    """
+    import base64 as b64
+    import io
+    import re
+    import tempfile
+
+    from PIL import Image
+
+    m = re.match(r"data:(?:image|application)/([\w.+-]+);base64,(.+)", dataurl or "", re.S)
+    if not m:
+        raise ValueError("expected a data:image/...;base64 URL")
+    raw = b64.b64decode(m.group(2))
+    ext = _EXT_BY_MIME.get(m.group(1).lower(), "")
+    if not ext and raw[4:8] == b"ftyp":  # browsers often label HEIC as octet-stream
+        ext = ".heic"
+    if ext in HEIC_EXTS:
+        with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tf:
+            tf.write(raw)
+            tmp = tf.name
+        try:
+            return _import_image_file(tmp)
+        finally:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+    img = Image.open(io.BytesIO(raw))
+    img.load()
+    return _save_pil(img)
 
 
 def _upload_path(name):
@@ -341,6 +413,10 @@ def _run_job(job):
 
     prefix = "qwen" if p.get("runtime") == "qwen-gguf" else "moss"
     out = os.path.join(OUTPUTS, f"{prefix}_{time.strftime('%Y%m%d_%H%M%S')}_{job['id']}.png")
+    if p.get("batch_src"):
+        os.makedirs(p["out_dir"], exist_ok=True)
+        out = os.path.join(p["out_dir"],
+                           os.path.splitext(os.path.basename(p["batch_src"]))[0] + ".png")
     seed = p["seed"]
     if seed == -1:  # roll the random seed here so the metadata can record the real one
         seed = random.randrange(2**31)
@@ -360,6 +436,11 @@ def _run_job(job):
             if not rp:
                 raise MossError("uploaded reference image is gone - pick the files again")
             ref_paths.append(rp)
+        if p.get("batch_src"):
+            with _lock:
+                job["message"] = "converting " + os.path.basename(p["batch_src"])
+            name, _, _ = _import_image_file(p["batch_src"])
+            ref_paths = [_upload_path(name)]
         width, height = p["width"], p["height"]
         if p.get("keep_aspect"):
             width, height = _ref_aspect_size(width, height, ref_paths)
@@ -397,7 +478,8 @@ def _run_job(job):
                           "steps": p["steps"], "strength": p["strength"],
                           "upscale": p["upscale"], "secs": round(secs, 1),
                           "runtime": p.get("runtime") or "sdcpp",
-                          "refs": len(p.get("refs") or [])})
+                          "refs": len(p.get("refs") or []),
+                          "source": os.path.basename(p["batch_src"]) if p.get("batch_src") else None})
         if p["upscale"]:
             with _lock:
                 job["message"] = "upscaling 2x"
@@ -419,6 +501,10 @@ def _run_job_mlx(job, ev):
     """Qwen-Image-2.1 via the local mflux MLX runtime - no sd-server involved."""
     p = job["params"]
     out = os.path.join(OUTPUTS, f"qwen_{time.strftime('%Y%m%d_%H%M%S')}_{job['id']}.png")
+    if p.get("batch_src"):
+        os.makedirs(p["out_dir"], exist_ok=True)
+        out = os.path.join(p["out_dir"],
+                           os.path.splitext(os.path.basename(p["batch_src"]))[0] + ".png")
     seed = p["seed"]
     if seed == -1:
         seed = random.randrange(2**31)
@@ -434,6 +520,11 @@ def _run_job_mlx(job, ev):
             if not rp:
                 raise MossError("uploaded reference image is gone - pick the files again")
             ref_paths.append(rp)
+        if p.get("batch_src"):
+            with _lock:
+                job["message"] = "converting " + os.path.basename(p["batch_src"])
+            name, _, _ = _import_image_file(p["batch_src"])
+            ref_paths = [_upload_path(name)]
         width, height = p["width"], p["height"]
         if p.get("keep_aspect"):
             width, height = _ref_aspect_size(width, height, ref_paths)
@@ -459,7 +550,8 @@ def _run_job_mlx(job, ev):
                           "runtime": "mlx", "model": p.get("qmodel"),
                           "small_encoder": bool(p.get("small_encoder")),
                           "loras": [os.path.basename(x) for x in (p.get("loras") or ())],
-                          "refs": len(ref_paths)})
+                          "refs": len(ref_paths),
+                          "source": os.path.basename(p["batch_src"]) if p.get("batch_src") else None})
         if p["upscale"]:
             with _lock:
                 job["message"] = "upscaling 2x"
@@ -580,6 +672,7 @@ def _enqueue(payload):
         if lora_dmd2:
             guidance = 1.0  # DMD2 runs without CFG (teacher guidance is baked in)
     else:
+        lora_dmd2 = False
         quality = payload.get("quality", "standard")
         if quality not in QUALITY_STEPS:
             return None, f"quality must be one of {sorted(QUALITY_STEPS)}"
@@ -605,7 +698,7 @@ def _enqueue(payload):
     mode = payload.get("tag") or ("inpaint" if (init_name and mask_name)
                                   else ("restyle" if init_name else "txt2img"))
     if qwen:
-        mode = "qwen-edit" if refs else "qwen"
+        mode = "qwen-batch" if payload.get("batch_src") else ("qwen-edit" if refs else "qwen")
     with _lock:
         for _ in range(batch):
             job = {
@@ -620,6 +713,8 @@ def _enqueue(payload):
                            "txt_cfg": txt_cfg, "img_cfg": img_cfg, "guidance": guidance,
                            "step_cache": step_cache, "small_encoder": small_encoder,
                            "keep_aspect": keep_aspect,
+                           "batch_src": payload.get("batch_src"),
+                           "out_dir": payload.get("out_dir"),
                            "loras": ([qwen_mlx.DMD2_LORA] if lora_dmd2 else [])},
                 "step": 0, "total": None, "message": "queued",
                 "enqueued": time.time(), "started": None, "finished": None,
@@ -632,6 +727,57 @@ def _enqueue(payload):
     os.makedirs(OUTPUTS, exist_ok=True)
     os.makedirs(os.path.join(ROOT, "logs"), exist_ok=True)
     return jobs, None
+
+
+def _pick_folder():
+    """Open a native macOS folder-chooser dialog and return the picked path, or
+    None on cancel. Blocks until the user closes the dialog."""
+    try:
+        r = subprocess.run(
+            ["osascript", "-e",
+             'POSIX path of (choose folder with prompt "Pick a folder")'],
+            capture_output=True, text=True, timeout=3600)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if r.returncode != 0 or not r.stdout.strip():
+        return None
+    return os.path.realpath(r.stdout.strip())
+
+
+def _enqueue_batch(payload):
+    """Expand a folder of images into one Qwen-edit job per image.
+
+    The folder path comes from the local UI, so absolute paths are fine; every
+    readable image (HEIC included - converted on import) becomes its own job that
+    edits that one image with the submitted settings and saves it to the output
+    folder under the original name as PNG (an existing file is overwritten).
+    """
+    src_dir = os.path.realpath(str(payload.get("batch_dir") or "").strip())
+    out_dir = str(payload.get("batch_out") or "").strip()
+    if not src_dir or not os.path.isdir(src_dir):
+        return None, f"input folder not found: {src_dir or '(empty)'}"
+    out_dir = os.path.realpath(out_dir) if out_dir else os.path.join(src_dir, "qwen_out")
+    os.makedirs(out_dir, exist_ok=True)
+    files = sorted(n for n in os.listdir(src_dir)
+                   if n.lower().endswith(IMG_EXTS) and os.path.isfile(os.path.join(src_dir, n)))
+    if not files:
+        return None, f"no images in {src_dir}"
+    payload = dict(payload)
+    payload["batch"] = 1
+    payload["refs"] = []
+    jobs, errors = [], []
+    for n in files:
+        payload["batch_src"] = os.path.join(src_dir, n)
+        payload["out_dir"] = out_dir
+        js, err = _enqueue(payload)
+        if err:
+            errors.append(f"{n}: {err}")
+        else:
+            jobs.extend(js)
+    if not jobs:
+        return None, "; ".join(errors[:3])
+    return jobs, (f"{len(errors)} of {len(files)} files skipped: " + "; ".join(errors[:3])
+                  if errors else None)
 
 
 # ------------------------------------------------------------------ http
@@ -678,6 +824,7 @@ class Handler(BaseHTTPRequestHandler):
             if not fp:
                 self._json({"error": "not found"}, 404)
                 return
+            fp = _media_path(fp)
             ext = os.path.splitext(fp)[1].lower()
             ctype = "image/png" if ext == ".png" else "image/jpeg"
             self._file(fp, ctype, cache="max-age=3600")
@@ -713,9 +860,27 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": True, "name": name, "width": w, "height": h})
             except Exception as e:
                 self._json({"error": f"bad image: {e}"}, 400)
+        elif path == "/api/use-gallery":
+            fp = _resolve_src(str(payload.get("src", "")))
+            if not fp:
+                self._json({"error": "not found"}, 404)
+                return
+            try:
+                name, w, h = _import_image_file(fp)
+            except Exception as e:
+                self._json({"error": f"could not load image: {e}"}, 400)
+                return
+            self._json({"ok": True, "name": name, "width": w, "height": h})
         elif path == "/api/generate":
             job, err = _enqueue(payload)
             self._json({"error": err} if err else {"ok": True, "job": job})
+        elif path == "/api/pick-folder":
+            fp = _pick_folder()
+            self._json({"ok": fp is not None, "path": fp})
+        elif path == "/api/batch":
+            jobs, err = _enqueue_batch(payload)
+            self._json({"error": err} if (err and not jobs)
+                       else {"ok": True, "jobs": len(jobs or []), "warning": err})
         elif path == "/api/cancel":
             job_id = payload.get("id")
             with _lock:

@@ -237,7 +237,7 @@ button.link { border: none; background: none; color: var(--accent); cursor: poin
     </div>
 
     <div id="panel-edit" style="display:none">
-      <input type="file" id="efile" accept="image/png,image/jpeg,image/webp" hidden>
+      <input type="file" id="efile" accept="image/png,image/jpeg,image/webp,.heic,.heif" hidden>
       <div class="grid2">
         <button id="epick" class="chip">📷 Choose image…</button>
         <button id="eclear" class="chip">✕ Clear</button>
@@ -341,13 +341,26 @@ button.link { border: none; background: none; color: var(--accent); cursor: poin
     <div id="panel-qwen" style="display:none">
       <div>
         <label>Reference images (0 = pure generator, 1–8 = edit/combine into one)</label>
-        <input type="file" id="qfile" accept="image/png,image/jpeg,image/webp" multiple hidden>
+        <input type="file" id="qfile" accept="image/png,image/jpeg,image/webp,.heic,.heif" multiple hidden>
         <div class="row">
           <button id="qpick" class="chip">📷 Add images…</button>
           <button id="qclear" class="chip">✕ Clear all</button>
         </div>
         <div id="qimgs"></div>
       </div>
+      <details>
+        <summary style="cursor:pointer;color:var(--dim)">📁 Batch — process a whole folder (one edit per image)</summary>
+        <div style="display:flex;flex-direction:column;gap:10px;margin-top:10px">
+          <div class="grid2">
+            <div><label for="qbin">Input folder</label><input id="qbin" type="text" placeholder="/Users/me/Pictures/in" spellcheck="false">
+              <div class="row"><button id="qbinpick" class="chip">📂 Choose input folder…</button></div></div>
+            <div><label for="qbout">Output folder</label><input id="qbout" type="text" placeholder="empty = input folder /qwen_out" spellcheck="false">
+              <div class="row"><button id="qboutpick" class="chip">📂 Choose output folder…</button></div></div>
+          </div>
+          <div class="meta">Every image in the input folder (png/jpg/webp/heic…) becomes its own job: it is converted to PNG, edited with the settings below (the image is the single reference), and saved to the output folder under the same name. Existing output files are overwritten. HEIC is converted automatically.</div>
+          <div class="row"><button id="qbgo" class="chip">Process folder</button><span class="meta" id="qbinfo"></span></div>
+        </div>
+      </details>
       <div>
         <label for="qprompt">Prompt — what to make, or the edit to apply to the images above</label>
         <textarea id="qprompt" placeholder="Empty images: describe the image to generate. With images: e.g. «Place the person from image 1 in the setting of image 2, sunset light»."></textarea>
@@ -444,6 +457,9 @@ button.link { border: none; background: none; color: var(--accent); cursor: poin
   <div class="row">
     <button id="lbprev" title="←">‹ Prev</button>
     <a id="lbdl" download>Download</a>
+    <button id="lbcopy" title="Copy the generation prompt to the clipboard">📋 Copy prompt</button>
+    <button id="lbedit" title="Open this image in the Edit tab">✏️ Edit</button>
+    <button id="lbref" title="Add this image to the Qwen 2.1 tab as a reference">＋ Reference</button>
     <button id="lbup">Upscale 2x</button>
     <button id="lbdel">Delete</button>
     <button id="lbnext" title="→">Next ›</button>
@@ -914,12 +930,8 @@ $("#qlora").addEventListener("change", () => localStorage.setItem("moss_qlora", 
 if (localStorage.getItem("moss_qaspect") === "1") $("#qaspect").checked = true;
 $("#qaspect").addEventListener("change", () => localStorage.setItem("moss_qaspect", $("#qaspect").checked ? "1" : "0"));
 
-$("#qgo").onclick = async () => {
+function qBody() {
   const runtime = $("#qruntime").value;
-  if (runtime === "mlx" && !$("#qmodel").value) {
-    alert("No MLX model downloaded yet - run:  ./setup_qwen.sh mlx-q4");
-    return;
-  }
   const body = {
     prompt: $("#qprompt").value, width: +$("#qw").value, height: +$("#qh").value,
     runtime, quality: $("#qq").value, seed: +$("#qseed").value,
@@ -938,9 +950,57 @@ $("#qgo").onclick = async () => {
     body.variant = variant; body.quant = quant;
   }
   if (body.quality === "high" && !qTurbo()) body.steps = +$("#qsteps").value || 40;
-  const r = await fetch("/api/generate", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  return body;
+}
+$("#qgo").onclick = async () => {
+  const runtime = $("#qruntime").value;
+  if (runtime === "mlx" && !$("#qmodel").value) {
+    alert("No MLX model downloaded yet - run:  ./setup_qwen.sh mlx-q4");
+    return;
+  }
+  const r = await fetch("/api/generate", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(qBody())});
   const j = await r.json();
   if (j.error) alert(j.error);
+  refresh();
+};
+$("#qbin").value = localStorage.getItem("moss_qbin") || "";
+$("#qbout").value = localStorage.getItem("moss_qbout") || "";
+async function qPickFolder(which) {
+  const btn = which === "in" ? $("#qbinpick") : $("#qboutpick");
+  const old = btn.textContent;
+  btn.disabled = true; btn.textContent = "opening dialog…";
+  try {
+    const r = await fetch("/api/pick-folder", {method: "POST", headers: {"Content-Type": "application/json"}, body: "{}"});
+    const j = await r.json();
+    if (j.path) {
+      (which === "in" ? $("#qbin") : $("#qbout")).value = j.path;
+      localStorage.setItem(which === "in" ? "moss_qbin" : "moss_qbout", j.path);
+    }
+  } finally {
+    btn.disabled = false; btn.textContent = old;
+  }
+}
+$("#qbinpick").onclick = () => qPickFolder("in");
+$("#qboutpick").onclick = () => qPickFolder("out");
+$("#qbgo").onclick = async () => {
+  const runtime = $("#qruntime").value;
+  if (runtime === "mlx" && !$("#qmodel").value) {
+    alert("No MLX model downloaded yet - run:  ./setup_qwen.sh mlx-q4");
+    return;
+  }
+  if (!$("#qbin").value.trim()) { alert("Enter the input folder first."); return; }
+  localStorage.setItem("moss_qbin", $("#qbin").value.trim());
+  localStorage.setItem("moss_qbout", $("#qbout").value.trim());
+  const body = qBody();
+  body.batch_dir = $("#qbin").value.trim();
+  body.batch_out = $("#qbout").value.trim();
+  $("#qbinfo").textContent = "scanning folder…";
+  const r = await fetch("/api/batch", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  const j = await r.json();
+  $("#qbinfo").textContent = "";
+  if (j.error) { alert(j.error); return; }
+  if (j.warning) alert(j.warning);
+  $("#qbinfo").textContent = j.jobs + " image(s) queued.";
   refresh();
 };
 $("#qprompt").addEventListener("keydown", e => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") $("#qgo").click(); });
@@ -1020,7 +1080,7 @@ function renderGallery() {
 }
 const fmtSize = n => n > 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.round(n / 1024) + " KB";
 
-let lbName = null, lbCur = null;
+let lbName = null, lbCur = null, lbPrompt = "";
 function lbStep(delta) {
   const list = gSorted();
   if (!list.length) return;
@@ -1033,12 +1093,17 @@ function openLb(g) {
   lbName = g.name;
   $("#lbimg").src = "/media?src=" + encodeURIComponent(g.src);
   $("#lbname").textContent = g.name + " · " + fmtSize(g.size);
+  $("#lbcopy").style.display = "none";  // shown once metadata confirms there is a prompt
+  $("#lbcopy").textContent = "📋 Copy prompt";
+  lbPrompt = "";
   const metaEl = $("#lbmeta");
   metaEl.replaceChildren();
   fetch("/api/meta?src=" + encodeURIComponent(g.src))
     .then(r => r.ok ? r.json() : null)
     .then(m => {
       if (!m || lbName !== g.name) return;  // user already navigated to another image
+      lbPrompt = m.prompt || "";
+      $("#lbcopy").style.display = lbPrompt ? "" : "none";
       const promptLine = document.createElement("div");
       promptLine.className = "prompt";
       promptLine.textContent = m.prompt;
@@ -1059,6 +1124,50 @@ function openLb(g) {
 }
 $("#lbprev").onclick = () => lbStep(-1);
 $("#lbnext").onclick = () => lbStep(1);
+$("#lbcopy").onclick = async () => {
+  if (!lbPrompt) return;
+  try {
+    await navigator.clipboard.writeText(lbPrompt);
+  } catch {  // clipboard API needs a secure context; http://127.0.0.1 qualifies, but just in case
+    const ta = document.createElement("textarea");
+    ta.value = lbPrompt; document.body.append(ta); ta.select();
+    document.execCommand("copy"); ta.remove();
+  }
+  $("#lbcopy").textContent = "✓ Copied";
+  setTimeout(() => { $("#lbcopy").textContent = "📋 Copy prompt"; }, 1500);
+};
+
+async function useGalleryImage(src) {
+  const r = await fetch("/api/use-gallery", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({src})});
+  return r.json();
+}
+$("#lbedit").onclick = async () => {
+  if (!lbCur) return;
+  $("#lbedit").textContent = "Loading…";
+  const j = await useGalleryImage(lbCur.src);
+  $("#lbedit").textContent = "✏️ Edit";
+  if (j.error) { alert(j.error); return; }
+  edit.name = j.name; edit.w = j.width; edit.h = j.height;
+  $("#eimg").src = "/media?src=" + encodeURIComponent(lbCur.src);
+  maskCv.width = edit.w; maskCv.height = edit.h;
+  maskCtx.fillStyle = "#000"; maskCtx.fillRect(0, 0, edit.w, edit.h);
+  $("#ecanvas-wrap").style.display = "block";
+  $("#eempty").style.display = "none";
+  $("#lb").classList.remove("open");
+  setTab("edit");
+};
+$("#lbref").onclick = async () => {
+  if (!lbCur) return;
+  if (qwen.refs.length >= 8) { alert("At most 8 reference images."); return; }
+  $("#lbref").textContent = "Adding…";
+  const j = await useGalleryImage(lbCur.src);
+  $("#lbref").textContent = "＋ Reference";
+  if (j.error) { alert(j.error); return; }
+  qwen.refs.push({name: j.name, url: "/media?src=" + encodeURIComponent(lbCur.src)});
+  renderQImgs();
+  $("#lb").classList.remove("open");
+  setTab("qwen");
+};
 $("#lbclose").onclick = () => $("#lb").classList.remove("open");
 $("#lb").addEventListener("click", e => { if (e.target === $("#lb")) $("#lb").classList.remove("open"); });
 $("#lbdel").onclick = async () => {
