@@ -605,6 +605,9 @@ def _enqueue(payload):
         return None, f"bad reference image: {e}"
 
     qmodel = variant = quant = txt_cfg = img_cfg = guidance = None
+    # must be bound for every runtime: the shared params dict below reads it
+    # even on the sdcpp path, where only the qwen branch would assign it
+    lora_dmd2 = False
     step_cache = bool(payload.get("step_cache"))
     small_encoder = bool(payload.get("small_encoder"))
     keep_aspect = bool(payload.get("keep_aspect"))
